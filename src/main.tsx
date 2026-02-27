@@ -162,6 +162,35 @@ function extractInputCharacter(key: KeyboardEventLike): string | null {
   return null
 }
 
+const SPINNER_FRAMES = ["\u28fe", "\u28fd", "\u28fb", "\u28bf", "\u287f", "\u28df", "\u28ef", "\u28f7"]
+const WAVE_CHARS = "\u2581\u2582\u2583\u2585\u2587\u2585\u2583\u2582\u2581   "
+
+function useAnimationTick(active: boolean, intervalMs = 120): number {
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!active) {
+      setTick(0)
+      return
+    }
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs)
+    return () => clearInterval(id)
+  }, [active, intervalMs])
+  return tick
+}
+
+function waveCell(tick: number, width: number, offset: number): string {
+  const chars: string[] = []
+  for (let i = 0; i < width; i++) {
+    const idx = (tick + i * 2 + offset * 3) % WAVE_CHARS.length
+    chars.push(WAVE_CHARS[idx])
+  }
+  return chars.join("")
+}
+
+function spinnerFrame(tick: number): string {
+  return SPINNER_FRAMES[tick % SPINNER_FRAMES.length]
+}
+
 function summaryStatus(row: ProfileRow): string {
   if (row.loading) return "..."
   if (row.usage?.error) return "err"
@@ -202,6 +231,33 @@ function UsageBar({ label, window }: { label: string; window: UsageWindow | null
   )
 }
 
+function LoadingBar({ label, tick, offset }: { label: string; tick: number; offset: number }) {
+  const phase = (tick + offset * 4) % 24
+  const normalized = phase < 12 ? phase / 12 : (24 - phase) / 12
+  const widthPercent = Math.round(10 + normalized * 30)
+
+  return (
+    <box style={{ flexDirection: "row", gap: 1, height: 1 }}>
+      <box style={{ width: 18 }}>
+        <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+          {truncate(label, 17)}
+        </text>
+      </box>
+      <box style={{ flexGrow: 1, backgroundColor: theme.bgBarTrack, height: 1 }}>
+        <box style={{ width: `${widthPercent}%`, height: 1, backgroundColor: theme.bgSelected }} />
+      </box>
+      <box style={{ width: 5 }}>
+        <text fg={theme.textDim}>{"--"}</text>
+      </box>
+      <box style={{ width: 10 }}>
+        <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+          {"rst --"}
+        </text>
+      </box>
+    </box>
+  )
+}
+
 function App({ onQuit }: { onQuit: () => void }) {
   const [rows, setRows] = useState<ProfileRow[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -215,6 +271,8 @@ function App({ onQuit }: { onQuit: () => void }) {
   const [renameMode, setRenameMode] = useState<RenameMode | null>(null)
   const [deleteMode, setDeleteMode] = useState<DeleteMode | null>(null)
   const busyRef = useRef(false)
+  const anyLoading = refreshing || rows.some((row) => row.loading)
+  const tick = useAnimationTick(anyLoading)
 
   const selectedRow = rows[selectedIndex] || null
   const activeRow = useMemo(() => rows.find((row) => row.profile.isActive) || null, [rows])
@@ -505,7 +563,9 @@ function App({ onQuit }: { onQuit: () => void }) {
         <text attributes={TextAttributes.DIM} fg={theme.textDim}>
           {contextLine}
         </text>
-        <text fg={isBusy ? theme.warning : theme.textMuted}>{statusLine}</text>
+        <text fg={isBusy ? theme.warning : theme.textMuted}>
+          {refreshing ? spinnerFrame(tick) + " " + statusLine : statusLine}
+        </text>
       </box>
 
       {/* Profile Table */}
@@ -559,11 +619,12 @@ function App({ onQuit }: { onQuit: () => void }) {
           rows.map((row, index) => {
             const selected = index === selectedIndex
             const indicator = `${selected ? ">" : " "}${row.profile.isActive ? "*" : " "}`
-            const plan = row.usage?.planType || "--"
-            const p5 = remainingText(row.usage?.primary || null)
-            const p7 = remainingText(row.usage?.secondary || null)
-            const codex = remainingText(row.usage?.codexPrimary || null)
-            const status = summaryStatus(row)
+            const isLoading = row.loading
+            const plan = isLoading ? waveCell(tick, 4, index) : (row.usage?.planType || "--")
+            const p5 = isLoading ? waveCell(tick, 4, index + 4) : remainingText(row.usage?.primary || null)
+            const p7 = isLoading ? waveCell(tick, 4, index + 8) : remainingText(row.usage?.secondary || null)
+            const codex = isLoading ? waveCell(tick, 4, index + 12) : remainingText(row.usage?.codexPrimary || null)
+            const status = isLoading ? spinnerFrame(tick + index * 2) : summaryStatus(row)
             const displayName = profileDisplayName(row)
             const nameColor = row.usage?.error
               ? theme.error
@@ -588,23 +649,27 @@ function App({ onQuit }: { onQuit: () => void }) {
                   <text fg={nameColor}>{truncate(displayName, 33)}</text>
                 </box>
                 <box style={{ width: 7 }}>
-                  <text fg={theme.textMuted}>{plan}</text>
+                  <text fg={isLoading ? theme.accent : theme.textMuted}>{plan}</text>
                 </box>
                 <box style={{ width: 7 }}>
-                  <text fg={metricColor(row.usage?.primary || null)}>{p5}</text>
+                  <text fg={isLoading ? theme.accent : metricColor(row.usage?.primary || null)}>{p5}</text>
                 </box>
                 <box style={{ width: 7 }}>
-                  <text fg={metricColor(row.usage?.secondary || null)}>{p7}</text>
+                  <text fg={isLoading ? theme.accent : metricColor(row.usage?.secondary || null)}>{p7}</text>
                 </box>
                 <box style={{ width: 7 }}>
-                  <text fg={metricColor(row.usage?.codexPrimary || null)}>{codex}</text>
+                  <text fg={isLoading ? theme.accent : metricColor(row.usage?.codexPrimary || null)}>{codex}</text>
                 </box>
                 <box style={{ width: 7 }}>
-                  <text
-                    fg={
-                      status === "err" ? theme.error : status === "..." ? theme.warning : theme.textDim
-                    }
-                  >
+                <text
+                  fg={
+                    isLoading
+                      ? theme.accent
+                      : status === "err"
+                        ? theme.error
+                        : theme.textDim
+                  }
+                >
                     {status}
                   </text>
                 </box>
@@ -644,37 +709,50 @@ function App({ onQuit }: { onQuit: () => void }) {
             </text>
 
             <box style={{ marginTop: 1, flexDirection: "column", gap: 1 }}>
-              <UsageBar label="Primary 5h" window={selectedUsage?.primary || null} />
-              <UsageBar label="Weekly 7d" window={selectedUsage?.secondary || null} />
-              {hasCodexData ? (
-                selectedUsage?.codexAllowed === false ? (
-                  <text fg={theme.textDim}>{selectedCodexLabel + ": unavailable"}</text>
-                ) : (
-                  <>
-                    <UsageBar
-                      label={`${selectedCodexLabel} 5h`}
-                      window={selectedUsage?.codexPrimary || null}
-                    />
-                    <UsageBar
-                      label={`${selectedCodexLabel} 7d`}
-                      window={selectedUsage?.codexSecondary || null}
-                    />
-                  </>
-                )
-              ) : null}
-              {hasCodeReviewData ? (
-                selectedUsage?.codeReviewAllowed === false ? (
-                  <text fg={theme.textDim}>Code review: unavailable</text>
-                ) : (
-                  <UsageBar label="Code review" window={selectedCodeReviewWindow} />
-                )
-              ) : null}
+              {selectedRow?.loading ? (
+                <>
+                  <LoadingBar label="Primary 5h" tick={tick} offset={0} />
+                  <LoadingBar label="Weekly 7d" tick={tick} offset={1} />
+                </>
+              ) : (
+                <>
+                  <UsageBar label="Primary 5h" window={selectedUsage?.primary || null} />
+                  <UsageBar label="Weekly 7d" window={selectedUsage?.secondary || null} />
+                  {hasCodexData ? (
+                    selectedUsage?.codexAllowed === false ? (
+                      <text fg={theme.textDim}>{selectedCodexLabel + ": unavailable"}</text>
+                    ) : (
+                      <>
+                        <UsageBar
+                          label={`${selectedCodexLabel} 5h`}
+                          window={selectedUsage?.codexPrimary || null}
+                        />
+                        <UsageBar
+                          label={`${selectedCodexLabel} 7d`}
+                          window={selectedUsage?.codexSecondary || null}
+                        />
+                      </>
+                    )
+                  ) : null}
+                  {hasCodeReviewData ? (
+                    selectedUsage?.codeReviewAllowed === false ? (
+                      <text fg={theme.textDim}>Code review: unavailable</text>
+                    ) : (
+                      <UsageBar label="Code review" window={selectedCodeReviewWindow} />
+                    )
+                  ) : null}
+                </>
+              )}
             </box>
 
             <text>
               <span fg={theme.textDim}>{"Credits "}</span>
               <span fg={theme.textMuted}>
-                {selectedUsage?.creditsUnlimited ? "unlimited" : selectedUsage?.creditsBalance || "0"}
+                {selectedRow?.loading
+                  ? "--"
+                  : selectedUsage?.creditsUnlimited
+                    ? "unlimited"
+                    : selectedUsage?.creditsBalance || "0"}
               </span>
             </text>
             {selectedUsage?.error ? (
