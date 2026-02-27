@@ -418,6 +418,32 @@ async function saveCurrentProfile(name: string): Promise<{ path: string; overwri
   return { path: filePath, overwritten }
 }
 
+async function renameProfile(profile: ProviderProfile, name: string): Promise<{ path: string }> {
+  if (profile.source !== "snapshot") {
+    throw new Error("Only saved snapshots can be renamed")
+  }
+
+  const profileName = validateProfileName(name)
+  const nextPath = path.join(path.dirname(profile.path), `${profileName}.json`)
+  if (nextPath === profile.path) {
+    return { path: nextPath }
+  }
+
+  if (await pathExists(nextPath)) {
+    throw new Error(`Snapshot already exists: ${profileName}`)
+  }
+
+  await fs.rename(profile.path, nextPath)
+  return { path: nextPath }
+}
+
+async function deleteProfile(profile: ProviderProfile): Promise<void> {
+  if (profile.source !== "snapshot") {
+    throw new Error("Only saved snapshots can be deleted")
+  }
+  await fs.rm(profile.path, { force: true })
+}
+
 async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
   const paths = resolvePaths()
 
@@ -467,5 +493,7 @@ export const openAIProvider: ProviderAdapter = {
   listProfiles,
   switchToProfile,
   saveCurrentProfile,
+  renameProfile,
+  deleteProfile,
   fetchUsage,
 }

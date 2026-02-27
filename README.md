@@ -20,7 +20,7 @@ Planned provider support:
 - Renders each window as a filled ASCII bar for fast visual scanning.
 - Marks the active account.
 - Lets you switch active auth quickly from the TUI.
-- Lets you save the current active auth into a named snapshot from the TUI.
+- Lets you save the current active auth into a snapshot (defaults to email-based name).
 - Shows when the active auth is unsaved.
 - If active auth matches a saved snapshot, it appears once (no duplicate active row).
 - Codex/code-review rows are shown only when the API reports them; unavailable rows are explicitly marked.
@@ -50,8 +50,10 @@ bun run start
 
 - `j` / `k` or arrow keys: move selection
 - `s` or `Enter`: switch active auth to selected snapshot
-- `a`: save current active auth as a snapshot
-- `r`: refresh usage
+- `a`: save current active auth (auto-name from email/account)
+- `r`: rename selected snapshot
+- `d`: delete selected snapshot (with confirmation)
+- `u`: refresh usage
 - `q`: quit
 
 ## Environment overrides

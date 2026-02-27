@@ -38,5 +38,7 @@ export type ProviderAdapter = {
   listProfiles: () => Promise<ProviderProfile[]>
   switchToProfile: (profile: ProviderProfile) => Promise<void>
   saveCurrentProfile: (name: string) => Promise<{ path: string; overwritten: boolean }>
+  renameProfile: (profile: ProviderProfile, name: string) => Promise<{ path: string }>
+  deleteProfile: (profile: ProviderProfile) => Promise<void>
   fetchUsage: (profile: ProviderProfile) => Promise<ProfileUsage>
 }
