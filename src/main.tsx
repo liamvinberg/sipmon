@@ -257,7 +257,7 @@ function App() {
   const beginRename = useCallback(() => {
     if (!selectedRow) return
     if (selectedRow.profile.source !== "snapshot") {
-      setStatusLine("Select a saved snapshot to rename")
+      setStatusLine("Select a saved profile to rename")
       return
     }
     setDeleteMode(null)
@@ -291,7 +291,7 @@ function App() {
   const beginDelete = useCallback(() => {
     if (!selectedRow) return
     if (selectedRow.profile.source !== "snapshot") {
-      setStatusLine("Select a saved snapshot to delete")
+      setStatusLine("Select a saved profile to delete")
       return
     }
     setRenameMode(null)
@@ -469,11 +469,6 @@ function App() {
               Profile
             </text>
           </box>
-          <box style={{ width: 10 }}>
-            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
-              State
-            </text>
-          </box>
           <box style={{ width: 7 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               Plan
@@ -506,7 +501,6 @@ function App() {
           rows.map((row, index) => {
             const selected = index === selectedIndex
             const indicator = `${selected ? ">" : " "}${row.profile.isActive ? "*" : " "}`
-            const state = row.profile.isActive ? "active" : row.profile.source
             const plan = row.usage?.planType || "--"
             const p5 = remainingText(row.usage?.primary || null)
             const p7 = remainingText(row.usage?.secondary || null)
@@ -533,9 +527,6 @@ function App() {
                 </box>
                 <box style={{ width: 20 }}>
                   <text fg={nameColor}>{truncate(row.profile.name, 19)}</text>
-                </box>
-                <box style={{ width: 10 }}>
-                  <text fg={row.profile.isActive ? theme.accent : theme.textDim}>{state}</text>
                 </box>
                 <box style={{ width: 7 }}>
                   <text fg={theme.textMuted}>{plan}</text>
@@ -580,9 +571,7 @@ function App() {
         ) : (
           <>
             <text>
-              <span fg={theme.textDim}>
-                {selectedRow.profile.isActive ? "active" : selectedRow.profile.source}
-              </span>
+              <span fg={theme.textDim}>{selectedRow.profile.isActive ? "active" : "saved"}</span>
               <span fg={theme.textDim}>{" | "}</span>
               <span fg={theme.textDim}>{selectedRow.profile.authType}</span>
             </text>
