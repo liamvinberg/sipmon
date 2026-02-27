@@ -1,10 +1,48 @@
 {
-  "name": "opencode-usage-tui",
-  "private": true,
+  "name": "sipmon",
+  "version": "0.1.0",
+  "description": "Terminal usage monitor and account switcher for AI providers",
+  "license": "MIT",
   "type": "module",
+  "bin": {
+    "sipmon": "bin/sipmon.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "tui",
+    "terminal",
+    "openai",
+    "codex",
+    "usage",
+    "monitor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liamvinberg/sipmon.git"
+  },
+  "homepage": "https://github.com/liamvinberg/sipmon",
+  "bugs": {
+    "url": "https://github.com/liamvinberg/sipmon/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "start": "bun run src/main.tsx",
-    "check": "bunx tsc --noEmit"
+    "dev": "bun run src/cli.ts",
+    "start": "node dist/cli.js",
+    "build": "bunx tsc --outDir dist",
+    "check": "bunx tsc --noEmit",
+    "prepack": "bun run build",
+    "pack:dry": "npm pack --dry-run",
+    "release:prep": "bun run check && bun run build && npm pack --dry-run"
   },
   "dependencies": {
     "@opentui/core": "^0.1.84",

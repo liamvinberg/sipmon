@@ -389,7 +389,7 @@ function App() {
   return (
     <box style={{ padding: 1, flexDirection: "column" }}>
       <box style={{ border: true, borderColor: "#7aa2f7", padding: 1, flexDirection: "column", marginBottom: 1 }}>
-        <text content="OpenCode Usage + Account Switcher" style={{ fg: "#7aa2f7" }} />
+        <text content="sipmon" style={{ fg: "#7aa2f7" }} />
         <text content={`Provider: ${provider.label} | Last refresh: ${lastRefresh}`} style={{ fg: "#a9b1d6" }} />
         <text
           content={
