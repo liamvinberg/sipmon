@@ -1,6 +1,6 @@
 {
   "name": "sipmon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Terminal usage monitor and account switcher for AI providers",
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,8 @@
     "sipmon": "bin/sipmon.js"
   },
   "files": [
-    "dist",
+    "dist/*.js",
+    "dist/providers/*.js",
     "bin",
     "README.md",
     "LICENSE"
@@ -30,19 +31,26 @@
     "url": "https://github.com/liamvinberg/sipmon/issues"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "bun": ">=1.1.0"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "start": "node dist/cli.js",
+    "start": "bun run dist/cli.js",
     "build": "bunx tsc --outDir dist",
+    "build:binary": "bash ./scripts/build-binary.sh",
+    "build:artifact": "bash ./scripts/build-release-artifact.sh",
     "check": "bunx tsc --noEmit",
+    "version:bump": "node ./scripts/bump-version.mjs",
+    "version:patch": "node ./scripts/bump-version.mjs patch",
+    "version:minor": "node ./scripts/bump-version.mjs minor",
+    "version:major": "node ./scripts/bump-version.mjs major",
     "prepack": "bun run build",
     "pack:dry": "npm pack --dry-run",
-    "release:prep": "bun run check && bun run build && npm pack --dry-run"
+    "release:prep": "bun run check && bun run build && bun run build:artifact && npm pack --dry-run"
   },
   "dependencies": {
     "@opentui/core": "^0.1.84",

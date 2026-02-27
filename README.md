@@ -21,17 +21,24 @@ brew tap liamvinberg/tap
 brew install liamvinberg/tap/sipmon
 ```
 
-### npm
+### curl bootstrap (no Homebrew)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/liamvinberg/sipmon/main/install.sh | bash
+```
+
+### npm (advanced)
+
+`npm` distribution is source-based and currently expects Bun at runtime.
 
 ```bash
 npm install -g sipmon
 ```
 
-### Bootstrap script
+## Runtime requirements
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/liamvinberg/sipmon/main/install.sh | bash
-```
+- Homebrew or `install.sh` install: no Bun required for end users
+- npm install: Bun required at runtime
 
 ## Run
 
@@ -65,25 +72,40 @@ bun run dev
 
 ## Release flow
 
-1. Validate and package locally:
+1. Bump version (updates `package.json` and `bun.lock`):
+
+```bash
+bun run version:patch
+# or: bun run version:minor
+# or: bun run version:major
+```
+
+2. Validate and package locally:
 
 ```bash
 bun run release:prep
 ```
 
-2. Publish to npm:
+3. Create release artifact and publish GitHub release:
+
+```bash
+bun run build:artifact
+gh release create "v<version>" "dist/sipmon-<version>-darwin-arm64.tar.gz" --title "v<version>" --notes "..."
+```
+
+4. Publish to npm (optional):
 
 ```bash
 npm publish
 ```
 
-3. Update Homebrew formula in your tap:
+5. Update Homebrew formula in your tap:
 
 ```bash
 ./scripts/update-homebrew-formula.sh <version> ~/personal/projects/homebrew-tap
 ```
 
-4. Commit and push tap changes:
+6. Commit and push tap changes:
 
 ```bash
 cd ~/personal/projects/homebrew-tap

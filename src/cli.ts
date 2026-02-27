@@ -1,6 +1,12 @@
 import fs from "node:fs"
 
+declare const SIPMON_VERSION: string | undefined
+
 function packageVersion(): string {
+  if (typeof SIPMON_VERSION === "string" && SIPMON_VERSION.trim().length > 0) {
+    return SIPMON_VERSION
+  }
+
   try {
     const raw = fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
     const parsed = JSON.parse(raw) as { version?: string }
