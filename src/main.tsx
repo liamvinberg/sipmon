@@ -117,6 +117,10 @@ function summaryStatus(row: ProfileRow): string {
   return "ok"
 }
 
+function profileDisplayName(row: ProfileRow): string {
+  return row.usage?.email || row.profile.name
+}
+
 function UsageBar({ label, window }: { label: string; window: UsageWindow | null }) {
   const remaining = remainingPercent(window)
   const color = metricColor(window)
@@ -164,6 +168,8 @@ function App() {
   const selectedRow = rows[selectedIndex] || null
   const activeRow = useMemo(() => rows.find((row) => row.profile.isActive) || null, [rows])
   const activeSaved = activeRow?.profile.source === "snapshot"
+  const activeDisplayName = activeRow ? profileDisplayName(activeRow) : null
+  const selectedDisplayName = selectedRow ? profileDisplayName(selectedRow) : null
 
   const refreshAll = useCallback(async () => {
     if (busyRef.current) return
@@ -441,7 +447,7 @@ function App() {
         <text>
           <span fg={theme.textDim}>{"Active "}</span>
           <span fg={activeSaved ? theme.accent : theme.warning}>
-            {activeSaved ? activeRow?.profile.name || "--" : "active only (login with a)"}
+            {activeSaved ? activeDisplayName || "--" : "active only (login with a)"}
           </span>
         </text>
         <text attributes={TextAttributes.DIM} fg={theme.textDim}>
@@ -506,6 +512,7 @@ function App() {
             const p7 = remainingText(row.usage?.secondary || null)
             const codex = remainingText(row.usage?.codexPrimary || null)
             const status = summaryStatus(row)
+            const displayName = profileDisplayName(row)
             const nameColor = row.usage?.error
               ? theme.error
               : selected
@@ -526,7 +533,7 @@ function App() {
                   <text fg={selected ? theme.accent : theme.textDim}>{indicator}</text>
                 </box>
                 <box style={{ width: 20 }}>
-                  <text fg={nameColor}>{truncate(row.profile.name, 19)}</text>
+                  <text fg={nameColor}>{truncate(displayName, 19)}</text>
                 </box>
                 <box style={{ width: 7 }}>
                   <text fg={theme.textMuted}>{plan}</text>
@@ -557,7 +564,7 @@ function App() {
 
       {/* Detail Panel */}
       <box
-        title={selectedRow ? ` ${selectedRow.profile.name} ` : undefined}
+        title={selectedDisplayName ? ` ${selectedDisplayName} ` : undefined}
         style={{
           border: true,
           borderColor: selectedRow ? theme.borderFocus : theme.border,
