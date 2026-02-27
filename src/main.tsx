@@ -112,8 +112,20 @@ function extractInputCharacter(key: KeyboardEventLike): string | null {
 }
 
 function toSnapshotName(value: string): string {
-  const lowered = value.trim().toLowerCase().replace(/@/g, "-at-")
-  const sanitized = lowered.replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
+  const lowered = value.trim().toLowerCase()
+  const atIndex = lowered.indexOf("@")
+
+  let base = lowered
+  if (atIndex > 0 && atIndex < lowered.length - 1) {
+    const local = lowered.slice(0, atIndex)
+    const domain = lowered.slice(atIndex + 1)
+    const domainParts = domain.split(".").filter((part) => part.length > 0)
+    const domainWithoutTld =
+      domainParts.length >= 2 ? domainParts.slice(0, -1).join(".") : domain
+    base = `${local}-${domainWithoutTld || domain}`
+  }
+
+  const sanitized = base.replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
   return sanitized || "openai-profile"
 }
 
