@@ -1,10 +1,16 @@
+import { createHash, randomBytes } from "node:crypto"
 import fs from "node:fs/promises"
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import path from "node:path"
+import { spawn } from "node:child_process"
 import type { ProfileUsage, ProviderAdapter, ProviderProfile, UsageWindow } from "./types"
 
 const OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const OPENAI_ISSUER = "https://auth.openai.com"
 const OPENAI_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage"
+const OAUTH_CALLBACK_PORT = 1455
+const OAUTH_CALLBACK_PATH = "/auth/callback"
+const OAUTH_TIMEOUT_MS = 5 * 60 * 1000
 
 type JsonObject = Record<string, unknown>
 
@@ -19,6 +25,45 @@ type OpenAIAuth = {
 type OpenAIPaths = {
   authFile: string
   openaiProfilesDir: string
+  opencodeAuthFile: string
+  replicationTargets: string[]
+}
+
+type PkceCodes = {
+  verifier: string
+  challenge: string
+}
+
+type TokenResponse = {
+  id_token?: string
+  access_token?: string
+  refresh_token?: string
+  expires_in?: number
+}
+
+const HTML_SUCCESS = `<!doctype html>
+<html>
+  <head><title>sipmon OAuth Success</title></head>
+  <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0;">
+    <div>
+      <h1>Authorization successful</h1>
+      <p>You can close this window and return to sipmon.</p>
+      <script>setTimeout(() => window.close(), 1500)</script>
+    </div>
+  </body>
+</html>`
+
+function htmlError(message: string): string {
+  return `<!doctype html>
+<html>
+  <head><title>sipmon OAuth Error</title></head>
+  <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0;">
+    <div>
+      <h1>Authorization failed</h1>
+      <pre style="white-space: pre-wrap;">${message}</pre>
+    </div>
+  </body>
+</html>`
 }
 
 function asObject(value: unknown): JsonObject | null {
@@ -65,16 +110,79 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
 function resolvePaths(): OpenAIPaths {
   const home = process.env.HOME || ""
   const xdgDataHome = process.env.XDG_DATA_HOME || path.join(home, ".local", "share")
-  const dataDir = path.join(xdgDataHome, "opencode")
-  const authFile = process.env.OPENCODE_AUTH_FILE || path.join(dataDir, "auth.json")
-  const profilesRoot = process.env.OPENCODE_USAGE_PROFILES_DIR || path.join(dataDir, "profiles")
-  const openaiProfilesDir = process.env.OPENCODE_OPENAI_PROFILES_DIR || path.join(profilesRoot, "openai")
-  return { authFile, openaiProfilesDir }
+
+  const sipmonDataDir = process.env.SIPMON_DATA_DIR || path.join(xdgDataHome, "sipmon")
+  const authFile = process.env.SIPMON_AUTH_FILE || path.join(sipmonDataDir, "auth.json")
+  const profilesRoot = process.env.SIPMON_PROFILES_DIR || path.join(sipmonDataDir, "profiles")
+  const openaiProfilesDir = process.env.SIPMON_OPENAI_PROFILES_DIR || path.join(profilesRoot, "openai")
+
+  const opencodeDataDir = path.join(xdgDataHome, "opencode")
+  const opencodeAuthFile = process.env.OPENCODE_AUTH_FILE || path.join(opencodeDataDir, "auth.json")
+
+  const replicationRaw = process.env.SIPMON_REPLICATION_TARGETS ?? "opencode"
+  const replicationTargets = replicationRaw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0)
+
+  return { authFile, openaiProfilesDir, opencodeAuthFile, replicationTargets }
 }
 
 function toOpenAIAuth(value: unknown): OpenAIAuth | null {
   const object = asObject(value)
   return object as OpenAIAuth | null
+}
+
+function base64UrlEncode(buffer: Buffer): string {
+  return buffer
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "")
+}
+
+function generateRandomState(): string {
+  return base64UrlEncode(randomBytes(32))
+}
+
+function generatePkce(): PkceCodes {
+  const verifier = base64UrlEncode(randomBytes(64))
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  return { verifier, challenge }
+}
+
+function buildAuthorizeUrl(redirectUri: string, pkce: PkceCodes, state: string): string {
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: OPENAI_OAUTH_CLIENT_ID,
+    redirect_uri: redirectUri,
+    scope: "openid profile email offline_access",
+    code_challenge: pkce.challenge,
+    code_challenge_method: "S256",
+    id_token_add_organizations: "true",
+    codex_cli_simplified_flow: "true",
+    state,
+    originator: "opencode",
+  })
+  return `${OPENAI_ISSUER}/oauth/authorize?${params.toString()}`
+}
+
+async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: PkceCodes): Promise<TokenResponse> {
+  const response = await fetch(`${OPENAI_ISSUER}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      client_id: OPENAI_OAUTH_CLIENT_ID,
+      code_verifier: pkce.verifier,
+    }).toString(),
+  })
+  if (!response.ok) {
+    throw new Error(`Token exchange failed: ${response.status}`)
+  }
+  return (await response.json()) as TokenResponse
 }
 
 function decodeJwtPayload(token: string): JsonObject | null {
@@ -93,15 +201,42 @@ function accountIdFromPayload(payload: JsonObject): string | null {
   const nestedAccountId = nested ? asString(nested.chatgpt_account_id) : null
   if (nestedAccountId) return nestedAccountId
   const rootAccountId = asString(payload.chatgpt_account_id)
-  return rootAccountId || null
+  if (rootAccountId) return rootAccountId
+  const organizations = payload.organizations
+  if (Array.isArray(organizations) && organizations.length > 0) {
+    const first = asObject(organizations[0])
+    const orgId = first ? asString(first.id) : null
+    if (orgId) return orgId
+  }
+  return null
 }
 
 function extractAccountId(auth: OpenAIAuth): string | null {
   const explicit = asString(auth.accountId)
   if (explicit) return explicit
   const access = asString(auth.access)
-  if (!access) return null
-  const payload = decodeJwtPayload(access)
+  if (access) {
+    const payload = decodeJwtPayload(access)
+    if (payload) {
+      const fromAccess = accountIdFromPayload(payload)
+      if (fromAccess) return fromAccess
+    }
+  }
+  return null
+}
+
+function extractAccountIdFromTokens(tokens: TokenResponse): string | null {
+  const idToken = asString(tokens.id_token)
+  if (idToken) {
+    const payload = decodeJwtPayload(idToken)
+    if (payload) {
+      const fromId = accountIdFromPayload(payload)
+      if (fromId) return fromId
+    }
+  }
+  const accessToken = asString(tokens.access_token)
+  if (!accessToken) return null
+  const payload = decodeJwtPayload(accessToken)
   if (!payload) return null
   return accountIdFromPayload(payload)
 }
@@ -140,6 +275,27 @@ async function writeCurrentAuth(authFile: string, auth: OpenAIAuth): Promise<voi
   }
   root.openai = auth
   await writeJsonAtomic(authFile, root)
+}
+
+async function replicateAuth(auth: OpenAIAuth, paths: OpenAIPaths): Promise<void> {
+  if (!paths.replicationTargets.includes("opencode")) {
+    return
+  }
+
+  let root: JsonObject = {}
+  try {
+    root = await readJsonObject(paths.opencodeAuthFile)
+  } catch {
+    root = {}
+  }
+
+  root.openai = auth
+  await writeJsonAtomic(paths.opencodeAuthFile, root)
+}
+
+async function writeActiveAuth(auth: OpenAIAuth, paths: OpenAIPaths): Promise<void> {
+  await writeCurrentAuth(paths.authFile, auth)
+  await replicateAuth(auth, paths)
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -333,10 +489,128 @@ async function maybeRefreshProfileAuth(profile: ProviderProfile, paths: OpenAIPa
     await writeJsonAtomic(profile.path, refreshed)
   }
   if (profile.source === "current" || profile.isActive) {
-    await writeCurrentAuth(paths.authFile, refreshed)
+    await writeActiveAuth(refreshed, paths)
   }
 
   return refreshed
+}
+
+function openBrowser(url: string): void {
+  const platform = process.platform
+  if (platform === "darwin") {
+    spawn("open", [url], { stdio: "ignore", detached: true }).unref()
+    return
+  }
+  if (platform === "win32") {
+    spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true }).unref()
+    return
+  }
+  spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref()
+}
+
+function sendHtml(res: ServerResponse<IncomingMessage>, status: number, html: string): void {
+  res.statusCode = status
+  res.setHeader("Content-Type", "text/html; charset=utf-8")
+  res.end(html)
+}
+
+async function runBrowserOAuthLogin(): Promise<OpenAIAuth> {
+  const redirectUri = `http://localhost:${OAUTH_CALLBACK_PORT}${OAUTH_CALLBACK_PATH}`
+  const pkce = generatePkce()
+  const state = generateRandomState()
+  const authUrl = buildAuthorizeUrl(redirectUri, pkce, state)
+
+  const tokensPromise = new Promise<TokenResponse>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("OAuth callback timeout"))
+    }, OAUTH_TIMEOUT_MS)
+
+    const server = createServer(async (req, res) => {
+      const requestUrl = new URL(req.url || "/", redirectUri)
+      if (requestUrl.pathname !== OAUTH_CALLBACK_PATH) {
+        sendHtml(res, 404, htmlError("Not found"))
+        return
+      }
+
+      const error = requestUrl.searchParams.get("error")
+      const errorDescription = requestUrl.searchParams.get("error_description")
+      if (error) {
+        const message = errorDescription || error
+        sendHtml(res, 400, htmlError(message))
+        clearTimeout(timeout)
+        server.close()
+        reject(new Error(message))
+        return
+      }
+
+      const code = requestUrl.searchParams.get("code")
+      const returnedState = requestUrl.searchParams.get("state")
+
+      if (!code) {
+        sendHtml(res, 400, htmlError("Missing authorization code"))
+        clearTimeout(timeout)
+        server.close()
+        reject(new Error("Missing authorization code"))
+        return
+      }
+
+      if (!returnedState || returnedState !== state) {
+        sendHtml(res, 400, htmlError("Invalid state parameter"))
+        clearTimeout(timeout)
+        server.close()
+        reject(new Error("Invalid state parameter"))
+        return
+      }
+
+      try {
+        const tokens = await exchangeCodeForTokens(code, redirectUri, pkce)
+        sendHtml(res, 200, HTML_SUCCESS)
+        clearTimeout(timeout)
+        server.close()
+        resolve(tokens)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Token exchange failed"
+        sendHtml(res, 500, htmlError(message))
+        clearTimeout(timeout)
+        server.close()
+        reject(new Error(message))
+      }
+    })
+
+    server.on("error", (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+
+    server.listen(OAUTH_CALLBACK_PORT, "localhost", () => {
+      openBrowser(authUrl)
+    })
+  })
+
+  const tokens = await tokensPromise
+  const access = asString(tokens.access_token)
+  const refresh = asString(tokens.refresh_token)
+  if (!access || !refresh) {
+    throw new Error("OAuth response missing access or refresh token")
+  }
+
+  const expiresIn = asNumber(tokens.expires_in) || 3600
+  const accountId = extractAccountIdFromTokens(tokens)
+
+  return {
+    type: "oauth",
+    access,
+    refresh,
+    expires: Date.now() + expiresIn * 1000,
+    ...(accountId ? { accountId } : {}),
+  }
+}
+
+async function loginWithOAuth(): Promise<{ accountId: string | null }> {
+  const paths = resolvePaths()
+  const auth = await runBrowserOAuthLogin()
+  await writeActiveAuth(auth, paths)
+  return { accountId: extractAccountId(auth) }
 }
 
 async function listProfiles(): Promise<ProviderProfile[]> {
@@ -389,7 +663,7 @@ async function switchToProfile(profile: ProviderProfile): Promise<void> {
   if (!auth) {
     throw new Error("Cannot switch profile with invalid auth payload")
   }
-  await writeCurrentAuth(paths.authFile, auth)
+  await writeActiveAuth(auth, paths)
 }
 
 function validateProfileName(name: string): string {
@@ -408,7 +682,7 @@ async function saveCurrentProfile(name: string): Promise<{ path: string; overwri
   const paths = resolvePaths()
   const current = await readCurrentAuth(paths.authFile)
   if (!current) {
-    throw new Error("No current openai auth found in auth.json")
+    throw new Error("No current openai auth found in sipmon auth.json")
   }
 
   await fs.mkdir(paths.openaiProfilesDir, { recursive: true })
@@ -471,7 +745,7 @@ async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
   const headers = new Headers({
     Authorization: `Bearer ${access}`,
     Accept: "application/json",
-    "User-Agent": "opencode-usage-tui/0.1",
+    "User-Agent": "sipmon/0.1",
   })
   const accountId = extractAccountId(auth)
   if (accountId) {
@@ -499,6 +773,7 @@ async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
 export const openAIProvider: ProviderAdapter = {
   id: "openai",
   label: "OpenAI / Codex",
+  loginWithOAuth,
   listProfiles,
   switchToProfile,
   saveCurrentProfile,

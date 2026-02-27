@@ -166,6 +166,7 @@ function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [loggingIn, setLoggingIn] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [renameMode, setRenameMode] = useState<RenameMode | null>(null)
@@ -234,7 +235,7 @@ function App() {
   }, [])
 
   const switchSelected = useCallback(async () => {
-    if (refreshing || switching || saving || renaming || deleting) return
+    if (refreshing || switching || saving || loggingIn || renaming || deleting) return
     const row = selectedRow
     if (!row) return
     if (row.profile.isActive) {
@@ -253,10 +254,10 @@ function App() {
     } finally {
       setSwitching(false)
     }
-  }, [deleting, refreshAll, refreshing, renaming, saving, selectedRow, switching])
+  }, [deleting, loggingIn, refreshAll, refreshing, renaming, saving, selectedRow, switching])
 
   const saveCurrentAuto = useCallback(async () => {
-    if (refreshing || switching || saving || renaming || deleting) return
+    if (refreshing || switching || saving || loggingIn || renaming || deleting) return
     const name = buildDefaultSaveName()
     setSaving(true)
     setStatusLine(`Saving as ${name}...`)
@@ -270,7 +271,26 @@ function App() {
     } finally {
       setSaving(false)
     }
-  }, [buildDefaultSaveName, deleting, refreshAll, refreshing, renaming, saving, switching])
+  }, [buildDefaultSaveName, deleting, loggingIn, refreshAll, refreshing, renaming, saving, switching])
+
+  const loginWithOAuth = useCallback(async () => {
+    if (refreshing || switching || saving || loggingIn || renaming || deleting) return
+    setLoggingIn(true)
+    setStatusLine("Starting OAuth login in browser...")
+    try {
+      const result = await provider.loginWithOAuth()
+      await refreshAll()
+      if (result.accountId) {
+        setStatusLine(`OAuth login successful (${result.accountId})`)
+      } else {
+        setStatusLine("OAuth login successful")
+      }
+    } catch (error) {
+      setStatusLine(`OAuth login failed: ${normalizeError(error)}`)
+    } finally {
+      setLoggingIn(false)
+    }
+  }, [deleting, loggingIn, refreshAll, refreshing, renaming, saving, switching])
 
   const beginRename = useCallback(() => {
     if (!selectedRow) return
@@ -380,6 +400,10 @@ function App() {
       setSelectedIndex((index) => Math.min(rows.length - 1, index + 1))
       return
     }
+    if (key.name === "l" && !key.repeated) {
+      void loginWithOAuth()
+      return
+    }
     if ((key.name === "s" || key.name === "return") && !key.repeated) {
       void switchSelected()
       return
@@ -427,13 +451,13 @@ function App() {
   )
   const selectedCodeReviewWindow = selectedUsage?.codeReviewPrimary || selectedUsage?.codeReviewSecondary || null
 
-  const isBusy = refreshing || switching || saving || renaming || deleting
+  const isBusy = refreshing || switching || saving || loggingIn || renaming || deleting
 
   const contextLine = renameMode
     ? `Rename: ${renameMode.value || "<name>"} (Enter confirm, Esc cancel)`
     : deleteMode
       ? `Delete ${deleteMode.profile.name}? (y confirm, n cancel)`
-      : "j/k move  s switch  a save  r rename  d delete  u refresh  q quit"
+      : "j/k move  l login(oauth)  s switch  a save  r rename  d delete  u refresh  q quit"
 
   return (
     <box style={{ backgroundColor: theme.bgBase, alignItems: "center", justifyContent: "center", height: "100%" }}>

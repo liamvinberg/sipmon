@@ -2,7 +2,7 @@
 
 Terminal usage monitor and account switcher for AI providers.
 
-`sipmon` is designed as a standalone provider dashboard. Right now it reads OpenAI auth snapshots from the OpenCode auth layout, but the codebase is adapter-based so additional providers and login flows can be added later.
+`sipmon` is designed as a standalone provider dashboard with provider-owned auth storage and OAuth login flow.
 
 ## OpenCode plugin package
 
@@ -14,6 +14,7 @@ This repo also contains `opencode-sipmon`, a publishable OpenCode plugin package
 ## Current capabilities
 
 - Account overview with aligned, color-coded remaining bars
+- OAuth login handled directly by sipmon (`l`)
 - Fast active-account switching
 - Save current auth to snapshot (auto-name from email/account)
 - Rename and delete snapshots from the TUI
@@ -56,6 +57,7 @@ sipmon
 ## Controls
 
 - `j` / `k` or arrow keys: move selection
+- `l`: login via provider OAuth flow (OpenAI/Codex)
 - `s` or `Enter`: switch active auth to selected snapshot
 - `a`: save current active auth (auto-name from email/account)
 - `r`: rename selected snapshot
@@ -65,9 +67,12 @@ sipmon
 
 ## Environment overrides
 
-- `OPENCODE_AUTH_FILE`
-- `OPENCODE_USAGE_PROFILES_DIR`
-- `OPENCODE_OPENAI_PROFILES_DIR`
+- `SIPMON_DATA_DIR`
+- `SIPMON_AUTH_FILE`
+- `SIPMON_PROFILES_DIR`
+- `SIPMON_OPENAI_PROFILES_DIR`
+- `SIPMON_REPLICATION_TARGETS` (default: `opencode`)
+- `OPENCODE_AUTH_FILE` (replication target path)
 
 ## Local development
 

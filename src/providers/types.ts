@@ -35,6 +35,7 @@ export type ProviderProfile = {
 export type ProviderAdapter = {
   id: string
   label: string
+  loginWithOAuth: () => Promise<{ accountId: string | null }>
   listProfiles: () => Promise<ProviderProfile[]>
   switchToProfile: (profile: ProviderProfile) => Promise<void>
   saveCurrentProfile: (name: string) => Promise<{ path: string; overwritten: boolean }>
