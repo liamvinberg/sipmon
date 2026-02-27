@@ -1,6 +1,6 @@
 {
   "name": "sipmon",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Terminal usage monitor and account switcher for AI providers",
   "license": "MIT",
   "type": "module",
