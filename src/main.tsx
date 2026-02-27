@@ -111,29 +111,6 @@ function extractInputCharacter(key: KeyboardEventLike): string | null {
   return null
 }
 
-function toSnapshotName(value: string): string {
-  const lowered = value.trim().toLowerCase()
-  const atIndex = lowered.indexOf("@")
-
-  let base = lowered
-  if (atIndex > 0 && atIndex < lowered.length - 1) {
-    const local = lowered.slice(0, atIndex)
-    const domain = lowered.slice(atIndex + 1)
-    const domainParts = domain.split(".").filter((part) => part.length > 0)
-    const domainWithoutTld =
-      domainParts.length >= 2 ? domainParts.slice(0, -1).join(".") : domain
-    base = `${local}-${domainWithoutTld || domain}`
-  }
-
-  const sanitized = base.replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
-  return sanitized || "openai-profile"
-}
-
-function snapshotNameFromPath(filePath: string): string {
-  const fileName = filePath.split(/[\\/]/).pop() || filePath
-  return fileName.endsWith(".json") ? fileName.slice(0, -5) : fileName
-}
-
 function summaryStatus(row: ProfileRow): string {
   if (row.loading) return "..."
   if (row.usage?.error) return "err"
@@ -177,7 +154,6 @@ function App() {
   const [lastRefresh, setLastRefresh] = useState("--")
   const [refreshing, setRefreshing] = useState(false)
   const [switching, setSwitching] = useState(false)
-  const [saving, setSaving] = useState(false)
   const [loggingIn, setLoggingIn] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -188,15 +164,6 @@ function App() {
   const selectedRow = rows[selectedIndex] || null
   const activeRow = useMemo(() => rows.find((row) => row.profile.isActive) || null, [rows])
   const activeSaved = activeRow?.profile.source === "snapshot"
-
-  const buildDefaultSaveName = useCallback(() => {
-    const source = activeRow || selectedRow || rows[0] || null
-    const email = source?.usage?.email || null
-    const accountId = source?.profile.accountId || null
-    if (email) return toSnapshotName(email)
-    if (accountId) return toSnapshotName(accountId)
-    return "openai-profile"
-  }, [activeRow, rows, selectedRow])
 
   const refreshAll = useCallback(async () => {
     if (busyRef.current) return
@@ -210,7 +177,7 @@ function App() {
         setRows([])
         setSelectedIndex(0)
         setLastRefresh("--")
-        setStatusLine("No profiles found. Save one with a.")
+        setStatusLine("No profiles found. Login with a.")
         return
       }
 
@@ -247,7 +214,7 @@ function App() {
   }, [])
 
   const switchSelected = useCallback(async () => {
-    if (refreshing || switching || saving || loggingIn || renaming || deleting) return
+    if (refreshing || switching || loggingIn || renaming || deleting) return
     const row = selectedRow
     if (!row) return
     if (row.profile.isActive) {
@@ -266,27 +233,10 @@ function App() {
     } finally {
       setSwitching(false)
     }
-  }, [deleting, loggingIn, refreshAll, refreshing, renaming, saving, selectedRow, switching])
-
-  const saveCurrentAuto = useCallback(async () => {
-    if (refreshing || switching || saving || loggingIn || renaming || deleting) return
-    const name = buildDefaultSaveName()
-    setSaving(true)
-    setStatusLine(`Saving as ${name}...`)
-    try {
-      const result = await provider.saveCurrentProfile(name)
-      const savedName = snapshotNameFromPath(result.path)
-      await refreshAll()
-      setStatusLine(result.overwritten ? `Updated snapshot ${savedName}` : `Saved snapshot ${savedName}`)
-    } catch (error) {
-      setStatusLine(`Save failed: ${normalizeError(error)}`)
-    } finally {
-      setSaving(false)
-    }
-  }, [buildDefaultSaveName, deleting, loggingIn, refreshAll, refreshing, renaming, saving, switching])
+  }, [deleting, loggingIn, refreshAll, refreshing, renaming, selectedRow, switching])
 
   const loginWithOAuth = useCallback(async () => {
-    if (refreshing || switching || saving || loggingIn || renaming || deleting) return
+    if (refreshing || switching || loggingIn || renaming || deleting) return
     setLoggingIn(true)
     setStatusLine("Starting OAuth login in browser...")
     try {
@@ -302,7 +252,7 @@ function App() {
     } finally {
       setLoggingIn(false)
     }
-  }, [deleting, loggingIn, refreshAll, refreshing, renaming, saving, switching])
+  }, [deleting, loggingIn, refreshAll, refreshing, renaming, switching])
 
   const beginRename = useCallback(() => {
     if (!selectedRow) return
@@ -412,16 +362,12 @@ function App() {
       setSelectedIndex((index) => Math.min(rows.length - 1, index + 1))
       return
     }
-    if (key.name === "l" && !key.repeated) {
-      void loginWithOAuth()
-      return
-    }
     if ((key.name === "s" || key.name === "return") && !key.repeated) {
       void switchSelected()
       return
     }
     if (key.name === "a" && !key.repeated) {
-      void saveCurrentAuto()
+      void loginWithOAuth()
       return
     }
     if (key.name === "r" && !key.repeated) {
@@ -463,13 +409,13 @@ function App() {
   )
   const selectedCodeReviewWindow = selectedUsage?.codeReviewPrimary || selectedUsage?.codeReviewSecondary || null
 
-  const isBusy = refreshing || switching || saving || loggingIn || renaming || deleting
+  const isBusy = refreshing || switching || loggingIn || renaming || deleting
 
   const contextLine = renameMode
     ? `Rename: ${renameMode.value || "<name>"} (Enter confirm, Esc cancel)`
     : deleteMode
       ? `Delete ${deleteMode.profile.name}? (y confirm, n cancel)`
-      : "j/k move  l login(oauth)  s switch  a save  r rename  d delete  u refresh  q quit"
+      : "j/k move  a login(oauth)  s switch  r rename  d delete  u refresh  q quit"
 
   return (
     <box style={{ backgroundColor: theme.bgBase, alignItems: "center", justifyContent: "center", height: "100%" }}>
@@ -495,7 +441,7 @@ function App() {
         <text>
           <span fg={theme.textDim}>{"Active "}</span>
           <span fg={activeSaved ? theme.accent : theme.warning}>
-            {activeSaved ? activeRow?.profile.name || "--" : "unsaved (press a to save)"}
+            {activeSaved ? activeRow?.profile.name || "--" : "active only (login with a)"}
           </span>
         </text>
         <text attributes={TextAttributes.DIM} fg={theme.textDim}>

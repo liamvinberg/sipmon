@@ -14,9 +14,9 @@ This repo also contains `opencode-sipmon`, a publishable OpenCode plugin package
 ## Current capabilities
 
 - Account overview with aligned, color-coded remaining bars
-- OAuth login handled directly by sipmon (`l`)
+- OAuth login handled directly by sipmon (`a`)
 - Fast active-account switching
-- Save current auth to snapshot (auto-name from email/account)
+- Auto-save snapshot when OAuth login succeeds
 - Rename and delete snapshots from the TUI
 - OpenAI/Codex usage parsing including primary, weekly, and extra limit windows
 
@@ -57,9 +57,8 @@ sipmon
 ## Controls
 
 - `j` / `k` or arrow keys: move selection
-- `l`: login via provider OAuth flow (OpenAI/Codex)
+- `a`: login via provider OAuth flow (OpenAI/Codex)
 - `s` or `Enter`: switch active auth to selected snapshot
-- `a`: save current active auth (auto-name from email/account)
 - `r`: rename selected snapshot
 - `d`: delete selected snapshot (with confirmation)
 - `u`: refresh usage
