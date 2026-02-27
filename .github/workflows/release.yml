@@ -1,0 +1,105 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      artifact: ${{ steps.meta.outputs.artifact }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must match v<major>.<minor>.<patch>" >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "package.json version ($PKG_VERSION) does not match tag ($VERSION)" >&2
+            exit 1
+          fi
+
+          ARTIFACT="sipmon-${VERSION}-darwin-arm64.tar.gz"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and package
+        run: bun run release:prep
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          files: dist/${{ steps.meta.outputs.artifact }}
+          generate_release_notes: true
+
+  update-homebrew:
+    needs: build-and-release
+    if: ${{ secrets.HOMEBREW_TAP_PUSH_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone tap repository
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_PUSH_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/liamvinberg/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
+
+      - name: Update formula
+        run: |
+          chmod +x ./scripts/update-homebrew-formula.sh
+          ./scripts/update-homebrew-formula.sh \
+            "${{ needs.build-and-release.outputs.version }}" \
+            "$RUNNER_TEMP/homebrew-tap" \
+            "${{ needs.build-and-release.outputs.artifact }}"
+
+      - name: Commit and push tap update
+        working-directory: ${{ runner.temp }}/homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/sipmon.rb
+          if git diff --cached --quiet; then
+            echo "No Homebrew formula changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update sipmon formula v${{ needs.build-and-release.outputs.version }}"
+          git push
