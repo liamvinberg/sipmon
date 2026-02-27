@@ -111,6 +111,11 @@ function toSnapshotName(value: string): string {
   return sanitized || "openai-profile"
 }
 
+function snapshotNameFromPath(filePath: string): string {
+  const fileName = filePath.split(/[\\/]/).pop() || filePath
+  return fileName.endsWith(".json") ? fileName.slice(0, -5) : fileName
+}
+
 function summaryStatus(row: ProfileRow): string {
   if (row.loading) return "loading"
   if (row.usage?.error) return "error"
@@ -222,8 +227,9 @@ function App() {
     setStatusLine(`Saving current auth as ${name}...`)
     try {
       const result = await provider.saveCurrentProfile(name)
+      const savedName = snapshotNameFromPath(result.path)
       await refreshAll()
-      setStatusLine(result.overwritten ? `Updated snapshot ${name}` : `Saved snapshot ${name}`)
+      setStatusLine(result.overwritten ? `Updated snapshot ${savedName}` : `Saved snapshot ${savedName}`)
     } catch (error) {
       setStatusLine(`Save failed: ${normalizeError(error)}`)
     } finally {

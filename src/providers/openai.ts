@@ -412,8 +412,17 @@ async function saveCurrentProfile(name: string): Promise<{ path: string; overwri
   }
 
   await fs.mkdir(paths.openaiProfilesDir, { recursive: true })
-  const filePath = path.join(paths.openaiProfilesDir, `${profileName}.json`)
-  const overwritten = await pathExists(filePath)
+  const snapshots = await readSnapshots(paths.openaiProfilesDir)
+  const currentAccountId = extractAccountId(current)
+
+  const accountMatch = currentAccountId
+    ? snapshots.find((snapshot) => extractAccountId(snapshot.auth) === currentAccountId)
+    : null
+  const identityMatch = snapshots.find((snapshot) => sameIdentity(snapshot.auth, current))
+  const existingMatch = accountMatch || identityMatch || null
+
+  const filePath = existingMatch ? existingMatch.filePath : path.join(paths.openaiProfilesDir, `${profileName}.json`)
+  const overwritten = existingMatch ? true : await pathExists(filePath)
   await writeJsonAtomic(filePath, current)
   return { path: filePath, overwritten }
 }
