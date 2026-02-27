@@ -1,49 +1,42 @@
-# opencode-usage-tui
+# sipmon
 
-Provider-oriented usage dashboard and account switcher for OpenCode auth profiles.
+Terminal usage monitor and account switcher for AI providers.
 
-Current provider support:
-- OpenAI / Codex
+`sipmon` is designed as a standalone provider dashboard. Right now it reads OpenAI auth snapshots from the OpenCode auth layout, but the codebase is adapter-based so additional providers and login flows can be added later.
 
-Planned provider support:
-- Anthropic and others via additional adapters in `src/providers`.
+## Current capabilities
 
-## What it does
+- Account overview with aligned, color-coded remaining bars
+- Fast active-account switching
+- Save current auth to snapshot (auto-name from email/account)
+- Rename and delete snapshots from the TUI
+- OpenAI/Codex usage parsing including primary, weekly, and extra limit windows
 
-- Reads OpenCode auth from `~/.local/share/opencode/auth.json`.
-- Reads saved OpenAI account snapshots from `~/.local/share/opencode/profiles/openai`.
-- Shows an overview per account for:
-  - Primary window remaining (5-hour window)
-  - Secondary window remaining (weekly window)
-  - Code review window
-  - Codex-specific additional window (when present)
-- Renders each window as a filled ASCII bar for fast visual scanning.
-- Marks the active account.
-- Lets you switch active auth quickly from the TUI.
-- Lets you save the current active auth into a snapshot (defaults to email-based name).
-- Shows when the active auth is unsaved.
-- If active auth matches a saved snapshot, it appears once (no duplicate active row).
-- Codex/code-review rows are shown only when the API reports them; unavailable rows are explicitly marked.
+## Install
 
-## Setup
-
-1. Save one or more OpenAI snapshots with your script:
+### Homebrew (recommended)
 
 ```bash
-opencode-openai-profile save work
-opencode-openai-profile save personal
+brew tap liamvinberg/tap
+brew install liamvinberg/tap/sipmon
 ```
 
-2. Install dependencies:
+### npm
 
 ```bash
-bun install
+npm install -g sipmon
 ```
 
-3. Run:
+### Bootstrap script
 
 ```bash
-bun run start
+curl -fsSL https://raw.githubusercontent.com/liamvinberg/sipmon/main/install.sh | bash
+```
+
+## Run
+
+```bash
+sipmon
 ```
 
 ## Controls
@@ -61,3 +54,40 @@ bun run start
 - `OPENCODE_AUTH_FILE`
 - `OPENCODE_USAGE_PROFILES_DIR`
 - `OPENCODE_OPENAI_PROFILES_DIR`
+
+## Local development
+
+```bash
+bun install
+bun run check
+bun run dev
+```
+
+## Release flow
+
+1. Validate and package locally:
+
+```bash
+bun run release:prep
+```
+
+2. Publish to npm:
+
+```bash
+npm publish
+```
+
+3. Update Homebrew formula in your tap:
+
+```bash
+./scripts/update-homebrew-formula.sh <version> ~/personal/projects/homebrew-tap
+```
+
+4. Commit and push tap changes:
+
+```bash
+cd ~/personal/projects/homebrew-tap
+git add Formula/sipmon.rb
+git commit -m "feat: add sipmon formula v<version>"
+git push
+```
