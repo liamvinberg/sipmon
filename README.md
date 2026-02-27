@@ -4,6 +4,13 @@ Terminal usage monitor and account switcher for AI providers.
 
 `sipmon` is designed as a standalone provider dashboard. Right now it reads OpenAI auth snapshots from the OpenCode auth layout, but the codebase is adapter-based so additional providers and login flows can be added later.
 
+## OpenCode plugin package
+
+This repo also contains `opencode-sipmon`, a publishable OpenCode plugin package for usage-limit failover and local notifications:
+
+- package path: `packages/opencode-sipmon`
+- config example: `examples/opencode/opencode.json`
+
 ## Current capabilities
 
 - Account overview with aligned, color-coded remaining bars
