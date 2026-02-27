@@ -6,7 +6,7 @@ import type { ProfileUsage, ProviderProfile, UsageWindow } from "./providers/typ
 
 const provider = providers[0]
 
-const MAX_WIDTH = 100
+const MAX_WIDTH = 120
 
 const theme = {
   bgBase: "#1a1b26",
@@ -136,9 +136,9 @@ function UsageBar({ label, window }: { label: string; window: UsageWindow | null
 
   return (
     <box style={{ flexDirection: "row", gap: 1, height: 1 }}>
-      <box style={{ width: 14 }}>
+      <box style={{ width: 18 }}>
         <text attributes={TextAttributes.DIM} fg={theme.textMuted}>
-          {truncate(label, 13)}
+          {truncate(label, 17)}
         </text>
       </box>
       <box style={{ flexGrow: 1, backgroundColor: theme.bgBarTrack, height: 1 }}>
@@ -622,11 +622,11 @@ function App() {
                 ) : (
                   <>
                     <UsageBar
-                      label={`${truncate(selectedCodexLabel, 10)} 5h`}
+                      label={`${selectedCodexLabel} 5h`}
                       window={selectedUsage?.codexPrimary || null}
                     />
                     <UsageBar
-                      label={`${truncate(selectedCodexLabel, 10)} 7d`}
+                      label={`${selectedCodexLabel} 7d`}
                       window={selectedUsage?.codexSecondary || null}
                     />
                   </>
