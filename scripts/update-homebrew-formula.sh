@@ -43,6 +43,7 @@ class Sipmon < Formula
   desc "Terminal usage monitor and account switcher for AI providers"
   homepage "https://github.com/liamvinberg/sipmon"
   url "$ASSET_URL"
+  version "$VERSION"
   sha256 "$SHA256"
   license "MIT"
 
