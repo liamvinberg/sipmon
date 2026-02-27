@@ -1,11 +1,32 @@
-import { createCliRenderer } from "@opentui/core"
+import { createCliRenderer, TextAttributes } from "@opentui/core"
 import { createRoot, useKeyboard } from "@opentui/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { providers } from "./providers"
 import type { ProfileUsage, ProviderProfile, UsageWindow } from "./providers/types"
 
 const provider = providers[0]
-const BAR_WIDTH = 24
+
+const MAX_WIDTH = 100
+
+const theme = {
+  bgBase: "#1a1b26",
+  bgPanel: "#1f2335",
+  bgHeader: "#24283b",
+  bgSelected: "#292e42",
+  bgBarTrack: "#3b3f57",
+
+  text: "#c0caf5",
+  textDim: "#565f89",
+  textMuted: "#a9b1d6",
+
+  border: "#2f3449",
+  borderFocus: "#414868",
+
+  accent: "#7aa2f7",
+  success: "#9ece6a",
+  warning: "#e0af68",
+  error: "#f7768e",
+}
 
 type KeyboardEventLike = {
   name?: string
@@ -30,15 +51,10 @@ type DeleteMode = {
   profile: ProviderProfile
 }
 
-function padRight(value: string, width: number): string {
-  if (value.length >= width) return value
-  return value + " ".repeat(width - value.length)
-}
-
 function truncate(value: string, width: number): string {
-  if (value.length <= width) return padRight(value, width)
+  if (value.length <= width) return value
   if (width <= 1) return value.slice(0, width)
-  return `${value.slice(0, width - 1)}…`
+  return `${value.slice(0, width - 1)}\u2026`
 }
 
 function clampPercent(value: number | null): number | null {
@@ -54,10 +70,10 @@ function remainingPercent(window: UsageWindow | null): number | null {
 
 function metricColor(window: UsageWindow | null): string {
   const remaining = remainingPercent(window)
-  if (remaining === null) return "#7aa2f7"
-  if (remaining >= 60) return "#9ece6a"
-  if (remaining >= 30) return "#e0af68"
-  return "#f7768e"
+  if (remaining === null) return theme.textDim
+  if (remaining >= 60) return theme.success
+  if (remaining >= 30) return theme.warning
+  return theme.error
 }
 
 function formatDuration(seconds: number | null): string {
@@ -69,16 +85,6 @@ function formatDuration(seconds: number | null): string {
   if (days > 0) return `${days}d ${hours}h`
   if (hours > 0) return `${hours}h ${minutes}m`
   return `${minutes}m`
-}
-
-function formatBar(window: UsageWindow | null): string {
-  const remaining = remainingPercent(window)
-  if (remaining === null) {
-    return `[${"-".repeat(BAR_WIDTH)}] --% remaining`
-  }
-  const filled = Math.round((remaining / 100) * BAR_WIDTH)
-  const bar = `${"#".repeat(filled)}${"-".repeat(BAR_WIDTH - filled)}`
-  return `[${bar}] ${String(Math.round(remaining)).padStart(3, " ")}% remaining`
 }
 
 function remainingText(window: UsageWindow | null): string {
@@ -117,9 +123,39 @@ function snapshotNameFromPath(filePath: string): string {
 }
 
 function summaryStatus(row: ProfileRow): string {
-  if (row.loading) return "loading"
-  if (row.usage?.error) return "error"
+  if (row.loading) return "..."
+  if (row.usage?.error) return "err"
   return "ok"
+}
+
+function UsageBar({ label, window }: { label: string; window: UsageWindow | null }) {
+  const remaining = remainingPercent(window)
+  const color = metricColor(window)
+  const reset = formatDuration(window?.resetAfterSeconds ?? null)
+  const pctText = remaining !== null ? `${Math.round(remaining)}%` : "--"
+
+  return (
+    <box style={{ flexDirection: "row", gap: 1, height: 1 }}>
+      <box style={{ width: 14 }}>
+        <text attributes={TextAttributes.DIM} fg={theme.textMuted}>
+          {truncate(label, 13)}
+        </text>
+      </box>
+      <box style={{ flexGrow: 1, backgroundColor: theme.bgBarTrack, height: 1 }}>
+        {remaining !== null && remaining > 0 ? (
+          <box style={{ width: `${Math.round(remaining)}%`, height: 1, backgroundColor: color }} />
+        ) : null}
+      </box>
+      <box style={{ width: 5 }}>
+        <text fg={color}>{pctText}</text>
+      </box>
+      <box style={{ width: 10 }}>
+        <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+          {"rst " + reset}
+        </text>
+      </box>
+    </box>
+  )
 }
 
 function App() {
@@ -140,11 +176,6 @@ function App() {
   const activeRow = useMemo(() => rows.find((row) => row.profile.isActive) || null, [rows])
   const activeSaved = activeRow?.profile.source === "snapshot"
 
-  const summaryHeader = useMemo(
-    () => `${padRight("Sel", 4)} ${padRight("Profile", 20)} ${padRight("State", 9)} ${padRight("Plan", 7)} ${padRight("5h", 7)} ${padRight("7d", 7)} ${padRight("Codex", 7)} Status`,
-    [],
-  )
-
   const buildDefaultSaveName = useCallback(() => {
     const source = activeRow || selectedRow || rows[0] || null
     const email = source?.usage?.email || null
@@ -158,7 +189,7 @@ function App() {
     if (busyRef.current) return
     busyRef.current = true
     setRefreshing(true)
-    setStatusLine("Refreshing profiles and usage...")
+    setStatusLine("Refreshing...")
 
     try {
       const profiles = await provider.listProfiles()
@@ -189,7 +220,11 @@ function App() {
       setRows(nextRows)
       setSelectedIndex((index) => Math.max(0, Math.min(index, nextRows.length - 1)))
       setLastRefresh(new Date().toLocaleTimeString())
-      setStatusLine(errorCount === 0 ? `Loaded ${nextRows.length} profile(s)` : `Loaded ${nextRows.length} profile(s), ${errorCount} error(s)`)
+      setStatusLine(
+        errorCount === 0
+          ? `Loaded ${nextRows.length} profile(s)`
+          : `Loaded ${nextRows.length} profile(s), ${errorCount} error(s)`,
+      )
     } catch (error) {
       setStatusLine(`Refresh failed: ${normalizeError(error)}`)
     } finally {
@@ -208,11 +243,11 @@ function App() {
     }
 
     setSwitching(true)
-    setStatusLine(`Switching active auth to ${row.profile.name}...`)
+    setStatusLine(`Switching to ${row.profile.name}...`)
     try {
       await provider.switchToProfile(row.profile)
       await refreshAll()
-      setStatusLine(`Switched active auth to ${row.profile.name}`)
+      setStatusLine(`Switched to ${row.profile.name}`)
     } catch (error) {
       setStatusLine(`Switch failed: ${normalizeError(error)}`)
     } finally {
@@ -224,7 +259,7 @@ function App() {
     if (refreshing || switching || saving || renaming || deleting) return
     const name = buildDefaultSaveName()
     setSaving(true)
-    setStatusLine(`Saving current auth as ${name}...`)
+    setStatusLine(`Saving as ${name}...`)
     try {
       const result = await provider.saveCurrentProfile(name)
       const savedName = snapshotNameFromPath(result.path)
@@ -263,7 +298,7 @@ function App() {
       await provider.renameProfile(renameMode.profile, targetName)
       setRenameMode(null)
       await refreshAll()
-      setStatusLine(`Renamed snapshot to ${targetName}`)
+      setStatusLine(`Renamed to ${targetName}`)
     } catch (error) {
       setStatusLine(`Rename failed: ${normalizeError(error)}`)
     } finally {
@@ -279,7 +314,7 @@ function App() {
     }
     setRenameMode(null)
     setDeleteMode({ profile: selectedRow.profile })
-    setStatusLine(`Delete ${selectedRow.profile.name}? Press y to confirm or n to cancel`)
+    setStatusLine(`Delete ${selectedRow.profile.name}? y to confirm, n to cancel`)
   }, [selectedRow])
 
   const submitDelete = useCallback(async () => {
@@ -290,7 +325,7 @@ function App() {
       const deletedName = deleteMode.profile.name
       setDeleteMode(null)
       await refreshAll()
-      setStatusLine(`Deleted snapshot ${deletedName}`)
+      setStatusLine(`Deleted ${deletedName}`)
     } catch (error) {
       setStatusLine(`Delete failed: ${normalizeError(error)}`)
     } finally {
@@ -392,107 +427,232 @@ function App() {
   )
   const selectedCodeReviewWindow = selectedUsage?.codeReviewPrimary || selectedUsage?.codeReviewSecondary || null
 
+  const isBusy = refreshing || switching || saving || renaming || deleting
+
+  const contextLine = renameMode
+    ? `Rename: ${renameMode.value || "<name>"} (Enter confirm, Esc cancel)`
+    : deleteMode
+      ? `Delete ${deleteMode.profile.name}? (y confirm, n cancel)`
+      : "j/k move  s switch  a save  r rename  d delete  u refresh  q quit"
+
   return (
-    <box style={{ padding: 1, flexDirection: "column" }}>
-      <box style={{ border: true, borderColor: "#7aa2f7", padding: 1, flexDirection: "column", marginBottom: 1 }}>
-        <text content="sipmon" style={{ fg: "#7aa2f7" }} />
-        <text content={`Provider: ${provider.label} | Last refresh: ${lastRefresh}`} style={{ fg: "#a9b1d6" }} />
-        <text
-          content={
-            activeSaved
-              ? `Active snapshot: ${activeRow?.profile.name || "--"}`
-              : "Active snapshot: UNSAVED (press a to save current auth by email)"
-          }
-          style={{ fg: activeSaved ? "#9ece6a" : "#f7768e" }}
-        />
-        <text
-          content={
-            renameMode
-              ? `Rename snapshot: ${renameMode.value || "<name>"} (Enter confirm, Esc cancel)`
-              : deleteMode
-                ? `Delete snapshot ${deleteMode.profile.name}? (y confirm, n cancel)`
-                : "Keys: j/k move | s switch | a save current (email) | r rename | d delete | u refresh | q quit"
-          }
-          style={{ fg: "#bb9af7" }}
-        />
-        <text content={statusLine} style={{ fg: refreshing || switching || saving || renaming || deleting ? "#e0af68" : "#c0caf5" }} />
+    <box style={{ backgroundColor: theme.bgBase, alignItems: "center", justifyContent: "center", height: "100%" }}>
+      <box style={{ maxWidth: MAX_WIDTH, width: "100%", padding: 1, flexDirection: "column" }}>
+      {/* Header */}
+      <box
+        title=" sipmon "
+        style={{
+          border: true,
+          borderColor: theme.borderFocus,
+          backgroundColor: theme.bgHeader,
+          padding: 1,
+          flexDirection: "column",
+          marginBottom: 1,
+        }}
+      >
+        <text>
+          <span fg={theme.textDim}>{"Provider "}</span>
+          <span fg={theme.textMuted}>{provider.label}</span>
+          <span fg={theme.textDim}>{"  Refreshed "}</span>
+          <span fg={theme.textMuted}>{lastRefresh}</span>
+        </text>
+        <text>
+          <span fg={theme.textDim}>{"Active "}</span>
+          <span fg={activeSaved ? theme.accent : theme.warning}>
+            {activeSaved ? activeRow?.profile.name || "--" : "unsaved (press a to save)"}
+          </span>
+        </text>
+        <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+          {contextLine}
+        </text>
+        <text fg={isBusy ? theme.warning : theme.textMuted}>{statusLine}</text>
       </box>
 
-      <box style={{ border: true, borderColor: "#414868", padding: 1, flexDirection: "column", marginBottom: 1 }}>
-        <text content={summaryHeader} style={{ fg: "#7dcfff" }} />
+      {/* Profile Table */}
+      <box
+        style={{
+          border: true,
+          borderColor: theme.border,
+          padding: 1,
+          flexDirection: "column",
+          marginBottom: 1,
+        }}
+      >
+        <box style={{ flexDirection: "row", marginBottom: 1 }}>
+          <box style={{ width: 4 }}>
+            <text>{" "}</text>
+          </box>
+          <box style={{ width: 20 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              Profile
+            </text>
+          </box>
+          <box style={{ width: 10 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              State
+            </text>
+          </box>
+          <box style={{ width: 7 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              Plan
+            </text>
+          </box>
+          <box style={{ width: 7 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              5h
+            </text>
+          </box>
+          <box style={{ width: 7 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              7d
+            </text>
+          </box>
+          <box style={{ width: 7 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              Codex
+            </text>
+          </box>
+          <box style={{ width: 7 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              Status
+            </text>
+          </box>
+        </box>
         {rows.length === 0 ? (
-          <text content="No profiles detected." style={{ fg: "#f7768e" }} />
+          <text fg={theme.textDim}>No profiles detected.</text>
         ) : (
           rows.map((row, index) => {
             const selected = index === selectedIndex
-            const sel = `${selected ? ">" : " "}${row.profile.isActive ? "*" : " "}`
+            const indicator = `${selected ? ">" : " "}${row.profile.isActive ? "*" : " "}`
             const state = row.profile.isActive ? "active" : row.profile.source
             const plan = row.usage?.planType || "--"
             const p5 = remainingText(row.usage?.primary || null)
             const p7 = remainingText(row.usage?.secondary || null)
             const codex = remainingText(row.usage?.codexPrimary || null)
             const status = summaryStatus(row)
-            const line = `${padRight(sel, 4)} ${truncate(row.profile.name, 20)} ${padRight(state, 9)} ${padRight(plan, 7)} ${padRight(p5, 7)} ${padRight(p7, 7)} ${padRight(codex, 7)} ${status}`
-            const lineColor = row.usage?.error ? "#f7768e" : selected ? "#ffffff" : row.profile.isActive ? "#9ece6a" : "#c0caf5"
-            return <text key={`${row.profile.source}:${row.profile.name}:${index}`} content={line} style={{ fg: lineColor }} />
+            const nameColor = row.usage?.error
+              ? theme.error
+              : selected
+                ? theme.text
+                : row.profile.isActive
+                  ? theme.accent
+                  : theme.textMuted
+
+            return (
+              <box
+                key={`${row.profile.source}:${row.profile.name}:${index}`}
+                style={{
+                  flexDirection: "row",
+                  backgroundColor: selected ? theme.bgSelected : undefined,
+                }}
+              >
+                <box style={{ width: 4 }}>
+                  <text fg={selected ? theme.accent : theme.textDim}>{indicator}</text>
+                </box>
+                <box style={{ width: 20 }}>
+                  <text fg={nameColor}>{truncate(row.profile.name, 19)}</text>
+                </box>
+                <box style={{ width: 10 }}>
+                  <text fg={row.profile.isActive ? theme.accent : theme.textDim}>{state}</text>
+                </box>
+                <box style={{ width: 7 }}>
+                  <text fg={theme.textMuted}>{plan}</text>
+                </box>
+                <box style={{ width: 7 }}>
+                  <text fg={metricColor(row.usage?.primary || null)}>{p5}</text>
+                </box>
+                <box style={{ width: 7 }}>
+                  <text fg={metricColor(row.usage?.secondary || null)}>{p7}</text>
+                </box>
+                <box style={{ width: 7 }}>
+                  <text fg={metricColor(row.usage?.codexPrimary || null)}>{codex}</text>
+                </box>
+                <box style={{ width: 7 }}>
+                  <text
+                    fg={
+                      status === "err" ? theme.error : status === "..." ? theme.warning : theme.textDim
+                    }
+                  >
+                    {status}
+                  </text>
+                </box>
+              </box>
+            )
           })
         )}
       </box>
 
-      <box style={{ border: true, borderColor: "#565f89", padding: 1, flexDirection: "column" }}>
+      {/* Detail Panel */}
+      <box
+        title={selectedRow ? ` ${selectedRow.profile.name} ` : undefined}
+        style={{
+          border: true,
+          borderColor: selectedRow ? theme.borderFocus : theme.border,
+          backgroundColor: theme.bgPanel,
+          padding: 1,
+          flexDirection: "column",
+        }}
+      >
         {!selectedRow ? (
-          <text content="No profile selected." style={{ fg: "#f7768e" }} />
+          <text fg={theme.textDim}>No profile selected.</text>
         ) : (
           <>
-            <text
-              content={`Selected: ${selectedRow.profile.name} [${selectedRow.profile.isActive ? "active" : selectedRow.profile.source}] [${selectedRow.profile.authType}]`}
-              style={{ fg: "#c0caf5" }}
-            />
-            <text
-              content={`Plan: ${selectedUsage?.planType || "--"}  Email: ${selectedUsage?.email || "--"}  Account: ${selectedRow.profile.accountId || "--"}`}
-              style={{ fg: "#a9b1d6" }}
-            />
-            <text
-              content={`${padRight("Primary (5h)", 14)} ${formatBar(selectedUsage?.primary || null)}  reset ${formatDuration(selectedUsage?.primary?.resetAfterSeconds ?? null)}`}
-              style={{ fg: metricColor(selectedUsage?.primary || null) }}
-            />
-            <text
-              content={`${padRight("Weekly (7d)", 14)} ${formatBar(selectedUsage?.secondary || null)}  reset ${formatDuration(selectedUsage?.secondary?.resetAfterSeconds ?? null)}`}
-              style={{ fg: metricColor(selectedUsage?.secondary || null) }}
-            />
-            {hasCodexData ? (
-              selectedUsage?.codexAllowed === false ? (
-                <text content={`${selectedCodexLabel}: unavailable on current plan`} style={{ fg: "#e0af68" }} />
-              ) : (
-                <>
-                  <text
-                    content={`${padRight(`${selectedCodexLabel} 5h`, 14)} ${formatBar(selectedUsage?.codexPrimary || null)}  reset ${formatDuration(selectedUsage?.codexPrimary?.resetAfterSeconds ?? null)}`}
-                    style={{ fg: metricColor(selectedUsage?.codexPrimary || null) }}
-                  />
-                  <text
-                    content={`${padRight(`${selectedCodexLabel} 7d`, 14)} ${formatBar(selectedUsage?.codexSecondary || null)}  reset ${formatDuration(selectedUsage?.codexSecondary?.resetAfterSeconds ?? null)}`}
-                    style={{ fg: metricColor(selectedUsage?.codexSecondary || null) }}
-                  />
-                </>
-              )
+            <text>
+              <span fg={theme.textDim}>
+                {selectedRow.profile.isActive ? "active" : selectedRow.profile.source}
+              </span>
+              <span fg={theme.textDim}>{" | "}</span>
+              <span fg={theme.textDim}>{selectedRow.profile.authType}</span>
+            </text>
+            <text>
+              <span fg={theme.textDim}>{"Plan "}</span>
+              <span fg={theme.textMuted}>{selectedUsage?.planType || "--"}</span>
+              <span fg={theme.textDim}>{"  Email "}</span>
+              <span fg={theme.textMuted}>{selectedUsage?.email || "--"}</span>
+              <span fg={theme.textDim}>{"  Account "}</span>
+              <span fg={theme.textMuted}>{selectedRow.profile.accountId || "--"}</span>
+            </text>
+
+            <box style={{ marginTop: 1, flexDirection: "column", gap: 1 }}>
+              <UsageBar label="Primary 5h" window={selectedUsage?.primary || null} />
+              <UsageBar label="Weekly 7d" window={selectedUsage?.secondary || null} />
+              {hasCodexData ? (
+                selectedUsage?.codexAllowed === false ? (
+                  <text fg={theme.textDim}>{selectedCodexLabel + ": unavailable"}</text>
+                ) : (
+                  <>
+                    <UsageBar
+                      label={`${truncate(selectedCodexLabel, 10)} 5h`}
+                      window={selectedUsage?.codexPrimary || null}
+                    />
+                    <UsageBar
+                      label={`${truncate(selectedCodexLabel, 10)} 7d`}
+                      window={selectedUsage?.codexSecondary || null}
+                    />
+                  </>
+                )
+              ) : null}
+              {hasCodeReviewData ? (
+                selectedUsage?.codeReviewAllowed === false ? (
+                  <text fg={theme.textDim}>Code review: unavailable</text>
+                ) : (
+                  <UsageBar label="Code review" window={selectedCodeReviewWindow} />
+                )
+              ) : null}
+            </box>
+
+            <text>
+              <span fg={theme.textDim}>{"Credits "}</span>
+              <span fg={theme.textMuted}>
+                {selectedUsage?.creditsUnlimited ? "unlimited" : selectedUsage?.creditsBalance || "0"}
+              </span>
+            </text>
+            {selectedUsage?.error ? (
+              <text fg={theme.error}>{"Error: " + selectedUsage.error}</text>
             ) : null}
-            {hasCodeReviewData ? (
-              selectedUsage?.codeReviewAllowed === false ? (
-                <text content="Code review: unavailable on current plan" style={{ fg: "#e0af68" }} />
-              ) : (
-                <text
-                  content={`${padRight("Code review", 14)} ${formatBar(selectedCodeReviewWindow)}  reset ${formatDuration(selectedCodeReviewWindow?.resetAfterSeconds ?? null)}`}
-                  style={{ fg: metricColor(selectedCodeReviewWindow) }}
-                />
-              )
-            ) : null}
-            <text
-              content={`Credits: ${selectedUsage?.creditsUnlimited ? "unlimited" : selectedUsage?.creditsBalance || "0"}`}
-              style={{ fg: "#a9b1d6" }}
-            />
-            {selectedUsage?.error ? <text content={`Error: ${selectedUsage.error}`} style={{ fg: "#f7768e" }} /> : null}
           </>
         )}
+      </box>
       </box>
     </box>
   )
