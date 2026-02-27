@@ -1,0 +1,26 @@
+{
+  "name": "opencode-sipmon",
+  "version": "0.1.0",
+  "description": "OpenCode plugin for usage-limit failover and local CLI notifications",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "failover",
+    "rate-limit",
+    "notification"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liamvinberg/sipmon.git",
+    "directory": "packages/opencode-sipmon"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
