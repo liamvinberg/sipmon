@@ -470,7 +470,7 @@ function App() {
           <box style={{ width: 4 }}>
             <text>{" "}</text>
           </box>
-          <box style={{ width: 20 }}>
+          <box style={{ width: 34 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               Profile
             </text>
@@ -532,8 +532,8 @@ function App() {
                 <box style={{ width: 4 }}>
                   <text fg={selected ? theme.accent : theme.textDim}>{indicator}</text>
                 </box>
-                <box style={{ width: 20 }}>
-                  <text fg={nameColor}>{truncate(displayName, 19)}</text>
+                <box style={{ width: 34 }}>
+                  <text fg={nameColor}>{truncate(displayName, 33)}</text>
                 </box>
                 <box style={{ width: 7 }}>
                   <text fg={theme.textMuted}>{plan}</text>
