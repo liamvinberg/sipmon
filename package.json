@@ -1,0 +1,19 @@
+{
+  "name": "opencode-usage-tui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/main.tsx",
+    "check": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.1.84",
+    "@opentui/react": "^0.1.84",
+    "react": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "typescript": "^5.9.0"
+  }
+}
