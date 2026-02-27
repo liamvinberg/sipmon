@@ -9,8 +9,15 @@ export type ProfileUsage = {
   planType: string | null
   primary: UsageWindow | null
   secondary: UsageWindow | null
+  codeReviewAllowed: boolean | null
+  codeReviewPrimary: UsageWindow | null
+  codeReviewSecondary: UsageWindow | null
+  codexAllowed: boolean | null
   codexPrimary: UsageWindow | null
   codexSecondary: UsageWindow | null
+  codexLabel: string | null
+  creditsBalance: string | null
+  creditsUnlimited: boolean | null
   error: string | null
 }
 

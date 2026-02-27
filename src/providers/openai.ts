@@ -36,6 +36,10 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null
+}
+
 function parseJsonObject(content: string, filePath: string): JsonObject {
   const parsed = JSON.parse(content)
   const object = asObject(parsed)
@@ -179,13 +183,39 @@ function usageWindowFromUnknown(value: unknown): UsageWindow | null {
   }
 }
 
+function emptyUsage(error: string | null): ProfileUsage {
+  return {
+    email: null,
+    planType: null,
+    primary: null,
+    secondary: null,
+    codeReviewAllowed: null,
+    codeReviewPrimary: null,
+    codeReviewSecondary: null,
+    codexAllowed: null,
+    codexPrimary: null,
+    codexSecondary: null,
+    codexLabel: null,
+    creditsBalance: null,
+    creditsUnlimited: null,
+    error,
+  }
+}
+
 function parseUsagePayload(payload: JsonObject): ProfileUsage {
   const rateLimit = asObject(payload.rate_limit)
   const primary = usageWindowFromUnknown(rateLimit?.primary_window)
   const secondary = usageWindowFromUnknown(rateLimit?.secondary_window)
 
+  const codeReview = asObject(payload.code_review_rate_limit)
+  const codeReviewAllowed = asBoolean(codeReview?.allowed)
+  const codeReviewPrimary = usageWindowFromUnknown(codeReview?.primary_window)
+  const codeReviewSecondary = usageWindowFromUnknown(codeReview?.secondary_window)
+
+  let codexAllowed: boolean | null = null
   let codexPrimary: UsageWindow | null = null
   let codexSecondary: UsageWindow | null = null
+  let codexLabel: string | null = null
 
   const additional = payload.additional_rate_limits
   if (Array.isArray(additional)) {
@@ -198,19 +228,32 @@ function parseUsagePayload(payload: JsonObject): ProfileUsage {
         continue
       }
       const extraRateLimit = asObject(entry.rate_limit)
+      codexAllowed = asBoolean(extraRateLimit?.allowed)
       codexPrimary = usageWindowFromUnknown(extraRateLimit?.primary_window)
       codexSecondary = usageWindowFromUnknown(extraRateLimit?.secondary_window)
+      codexLabel = limitName || meteredFeature || "Codex"
       break
     }
   }
+
+  const credits = asObject(payload.credits)
+  const creditsBalance = asString(credits?.balance)
+  const creditsUnlimited = typeof credits?.unlimited === "boolean" ? credits.unlimited : null
 
   return {
     email: asString(payload.email),
     planType: asString(payload.plan_type),
     primary,
     secondary,
+    codeReviewAllowed,
+    codeReviewPrimary,
+    codeReviewSecondary,
+    codexAllowed,
     codexPrimary,
     codexSecondary,
+    codexLabel,
+    creditsBalance,
+    creditsUnlimited,
     error: null,
   }
 }
@@ -309,20 +352,32 @@ async function listProfiles(): Promise<ProviderProfile[]> {
     auth: snapshot.auth,
     authType: asString(snapshot.auth.type) || "unknown",
     accountId: extractAccountId(snapshot.auth),
-    isActive: currentAuth ? sameIdentity(snapshot.auth, currentAuth) : false,
+    isActive: false,
   }))
 
   if (currentAuth) {
-    rows.unshift({
-      providerId: "openai",
-      name: "@active",
-      source: "current",
-      path: paths.authFile,
-      auth: currentAuth,
-      authType: asString(currentAuth.type) || "unknown",
-      accountId: extractAccountId(currentAuth),
-      isActive: true,
+    const matchedIndex = rows.findIndex((row) => {
+      const auth = toOpenAIAuth(row.auth)
+      return auth ? sameIdentity(auth, currentAuth) : false
     })
+
+    if (matchedIndex >= 0) {
+      rows[matchedIndex] = {
+        ...rows[matchedIndex],
+        isActive: true,
+      }
+    } else {
+      rows.unshift({
+        providerId: "openai",
+        name: "@active",
+        source: "current",
+        path: paths.authFile,
+        auth: currentAuth,
+        authType: asString(currentAuth.type) || "unknown",
+        accountId: extractAccountId(currentAuth),
+        isActive: true,
+      })
+    }
   }
 
   return rows
@@ -370,28 +425,12 @@ async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
   try {
     auth = await maybeRefreshProfileAuth(profile, paths)
   } catch (error) {
-    return {
-      email: null,
-      planType: null,
-      primary: null,
-      secondary: null,
-      codexPrimary: null,
-      codexSecondary: null,
-      error: error instanceof Error ? error.message : "Token refresh failed",
-    }
+    return emptyUsage(error instanceof Error ? error.message : "Token refresh failed")
   }
 
   const access = asString(auth.access)
   if (!access) {
-    return {
-      email: null,
-      planType: null,
-      primary: null,
-      secondary: null,
-      codexPrimary: null,
-      codexSecondary: null,
-      error: "Missing access token",
-    }
+    return emptyUsage("Missing access token")
   }
 
   const headers = new Headers({
@@ -411,28 +450,12 @@ async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
 
   if (!response.ok) {
     const shortBody = (await response.text()).slice(0, 180).replace(/\s+/g, " ")
-    return {
-      email: null,
-      planType: null,
-      primary: null,
-      secondary: null,
-      codexPrimary: null,
-      codexSecondary: null,
-      error: `HTTP ${response.status}: ${shortBody}`,
-    }
+    return emptyUsage(`HTTP ${response.status}: ${shortBody}`)
   }
 
   const payload = asObject(await response.json())
   if (!payload) {
-    return {
-      email: null,
-      planType: null,
-      primary: null,
-      secondary: null,
-      codexPrimary: null,
-      codexSecondary: null,
-      error: "Usage payload is not JSON object",
-    }
+    return emptyUsage("Usage payload is not JSON object")
   }
 
   return parseUsagePayload(payload)

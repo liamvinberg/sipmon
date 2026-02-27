@@ -26,6 +26,12 @@ function clampPercent(value: number | null): number | null {
   return Math.max(0, Math.min(100, value))
 }
 
+function remainingPercent(window: UsageWindow | null): number | null {
+  const used = clampPercent(window?.usedPercent ?? null)
+  if (used === null) return null
+  return Math.max(0, Math.min(100, 100 - used))
+}
+
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return "--"
   const total = Math.max(0, Math.round(seconds))
@@ -38,13 +44,13 @@ function formatDuration(seconds: number | null): string {
 }
 
 function formatBar(window: UsageWindow | null): string {
-  const percent = clampPercent(window?.usedPercent ?? null)
+  const percent = remainingPercent(window)
   if (percent === null) {
     return `[${"-".repeat(BAR_WIDTH)}]  --%`
   }
   const filled = Math.round((percent / 100) * BAR_WIDTH)
   const bar = `${"#".repeat(filled)}${"-".repeat(BAR_WIDTH - filled)}`
-  return `[${bar}] ${String(Math.round(percent)).padStart(3, " ")}%`
+  return `[${bar}] ${String(Math.round(percent)).padStart(3, " ")}% remaining`
 }
 
 function formatStatus(row: ProfileRow): string {
@@ -277,12 +283,13 @@ function App() {
         <text content={statusLine} style={{ fg: refreshing || switching || saving ? "#e0af68" : "#c0caf5" }} />
         <text
           content={
-            saveMode
+          saveMode
               ? `Save current as: ${saveInput || "<name>"}  (Enter confirm, Esc cancel)`
               : "Keys: j/k or arrows move | s/Enter switch | a save current | r refresh | q quit"
           }
           style={{ fg: "#bb9af7" }}
         />
+        <text content="Bars represent remaining quota to match ChatGPT usage UI." style={{ fg: "#7dcfff" }} />
       </box>
 
       {rows.length === 0 ? (
@@ -295,6 +302,14 @@ function App() {
           const rowColor = row.usage?.error ? "#f7768e" : selected ? "#ffffff" : "#c0caf5"
           const sourceLabel = row.profile.source === "snapshot" ? "snapshot" : "active"
           const usage = row.usage
+          const codexLabel = usage?.codexLabel || "Codex"
+          const hasCodexData = Boolean(
+            usage && (usage.codexLabel || usage.codexAllowed !== null || usage.codexPrimary || usage.codexSecondary),
+          )
+          const codeReviewWindow = usage?.codeReviewPrimary || usage?.codeReviewSecondary || null
+          const hasCodeReviewData = Boolean(
+            usage && (usage.codeReviewAllowed !== null || usage.codeReviewPrimary || usage.codeReviewSecondary),
+          )
 
           return (
             <box
@@ -323,8 +338,34 @@ function App() {
                 content={`Weekly  ${formatBar(usage?.secondary || null)}  reset ${formatDuration(usage?.secondary?.resetAfterSeconds ?? null)}`}
                 style={{ fg: rowColor }}
               />
+              {hasCodexData ? (
+                usage?.codexAllowed === false ? (
+                  <text content={`${codexLabel}: unavailable on current plan`} style={{ fg: rowColor }} />
+                ) : (
+                  <>
+                    <text
+                      content={`${codexLabel} 5h ${formatBar(usage?.codexPrimary || null)}  reset ${formatDuration(usage?.codexPrimary?.resetAfterSeconds ?? null)}`}
+                      style={{ fg: rowColor }}
+                    />
+                    <text
+                      content={`${codexLabel} 7d ${formatBar(usage?.codexSecondary || null)}  reset ${formatDuration(usage?.codexSecondary?.resetAfterSeconds ?? null)}`}
+                      style={{ fg: rowColor }}
+                    />
+                  </>
+                )
+              ) : null}
+              {hasCodeReviewData ? (
+                usage?.codeReviewAllowed === false ? (
+                  <text content="Code review: unavailable on current plan" style={{ fg: rowColor }} />
+                ) : (
+                  <text
+                    content={`Code review ${formatBar(codeReviewWindow)}  reset ${formatDuration(codeReviewWindow?.resetAfterSeconds ?? null)}`}
+                    style={{ fg: rowColor }}
+                  />
+                )
+              ) : null}
               <text
-                content={`Codex   ${formatBar(usage?.codexPrimary || null)}  reset ${formatDuration(usage?.codexPrimary?.resetAfterSeconds ?? null)}`}
+                content={`Credits: ${usage?.creditsUnlimited ? "unlimited" : usage?.creditsBalance || "0"}`}
                 style={{ fg: rowColor }}
               />
               {usage?.error ? <text content={`Error: ${usage.error}`} style={{ fg: "#f7768e" }} /> : null}
