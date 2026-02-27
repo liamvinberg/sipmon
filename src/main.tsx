@@ -51,6 +51,57 @@ type DeleteMode = {
   profile: ProviderProfile
 }
 
+function restoreTerminalState() {
+  if (!process.stdout.isTTY) return
+  try {
+    process.stdout.write("\u001b[?25h")
+    process.stdout.write("\u001b[?1049l")
+    process.stdout.write("\u001b[0m")
+  } catch (error) {
+    console.error("terminal restore failed:", error)
+  }
+  if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+    try {
+      process.stdin.setRawMode(false)
+    } catch (error) {
+      console.error("raw mode restore failed:", error)
+    }
+  }
+}
+
+function createShutdown(onBeforeExit: () => void) {
+  let exiting = false
+
+  const shutdown = (code: number) => {
+    if (exiting) {
+      process.exitCode = code
+      return
+    }
+    exiting = true
+    try {
+      onBeforeExit()
+    } catch (error) {
+      console.error("shutdown cleanup failed:", error)
+    }
+    restoreTerminalState()
+    process.exit(code)
+  }
+
+  process.on("exit", restoreTerminalState)
+  process.on("SIGINT", () => shutdown(0))
+  process.on("SIGTERM", () => shutdown(0))
+  process.on("uncaughtException", (error) => {
+    console.error(error)
+    shutdown(1)
+  })
+  process.on("unhandledRejection", (reason) => {
+    console.error(reason)
+    shutdown(1)
+  })
+
+  return shutdown
+}
+
 function truncate(value: string, width: number): string {
   if (value.length <= width) return value
   if (width <= 1) return value.slice(0, width)
@@ -151,7 +202,7 @@ function UsageBar({ label, window }: { label: string; window: UsageWindow | null
   )
 }
 
-function App() {
+function App({ onQuit }: { onQuit: () => void }) {
   const [rows, setRows] = useState<ProfileRow[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [statusLine, setStatusLine] = useState("Initializing...")
@@ -358,7 +409,8 @@ function App() {
     }
 
     if (key.name === "q" || key.name === "escape") {
-      process.exit(0)
+      onQuit()
+      return
     }
     if (key.name === "up" || key.name === "k") {
       setSelectedIndex((index) => Math.max(0, index - 1))
@@ -637,4 +689,9 @@ function App() {
 }
 
 const renderer = await createCliRenderer()
-createRoot(renderer).render(<App />)
+const root = createRoot(renderer)
+const shutdown = createShutdown(() => {
+  root.unmount()
+  renderer.destroy()
+})
+root.render(<App onQuit={() => shutdown(0)} />)
