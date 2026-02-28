@@ -35,18 +35,9 @@ brew install liamvinberg/tap/sipmon
 curl -fsSL https://raw.githubusercontent.com/liamvinberg/sipmon/main/install.sh | bash
 ```
 
-### npm (advanced)
-
-`npm` distribution is source-based and currently expects Bun at runtime.
-
-```bash
-npm install -g sipmon
-```
-
 ## Runtime requirements
 
 - Homebrew or `install.sh` install: no Bun required for end users
-- npm install: Bun required at runtime
 
 ## Run
 
