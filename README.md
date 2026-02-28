@@ -95,13 +95,7 @@ bun run build:artifact
 gh release create "v<version>" "dist/sipmon-<version>-darwin-arm64.tar.gz" --title "v<version>" --notes "..."
 ```
 
-4. Publish to npm (optional):
-
-```bash
-npm publish
-```
-
-5. Update Homebrew formula in your tap:
+4. Update Homebrew formula in your tap:
 
 ```bash
 ./scripts/update-homebrew-formula.sh <version> ~/personal/projects/homebrew-tap
