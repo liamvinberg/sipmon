@@ -1,10 +1,8 @@
 # opencode-sipmon
 
-OpenCode plugin that listens for `session.error` events, detects usage-limit/rate-limit failures, retries the same session on fallback model aliases, and sends a local notification from CLI context.
+OpenCode plugin that listens for usage-limit events and automatically switches the active OpenAI account using sipmon snapshots.
 
-## Why alias-based failover
-
-OpenCode auth storage is keyed by provider ID. That means one credential record per provider ID, so account failover is safest when you configure provider aliases (for example `openai-primary`, `openai-backup`) and authenticate each alias separately.
+When a rate-limit happens, it picks the best available sipmon OpenAI snapshot and writes that auth into OpenCode auth. OpenCode's own retry loop then continues naturally on the switched account.
 
 ## Install
 
@@ -19,21 +17,7 @@ npm install opencode-sipmon
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-sipmon"],
-  "provider": {
-    "openai-primary": {
-      "npm": "@ai-sdk/openai",
-      "options": {
-        "baseURL": "https://api.openai.com/v1"
-      }
-    },
-    "openai-backup": {
-      "npm": "@ai-sdk/openai",
-      "options": {
-        "baseURL": "https://api.openai.com/v1"
-      }
-    }
-  }
+  "plugin": ["opencode-sipmon"]
 }
 ```
 
@@ -58,24 +42,16 @@ After publishing to npm, switch back to:
 }
 ```
 
-## Environment configuration
+## Required setup
 
-The plugin is configured by environment variables so it can stay drop-in from `opencode.json`.
+No failover env vars are required.
 
-- `OPENCODE_FAILOVER_MODELS` (recommended): comma-separated `<provider>/<model>` list in failover order.
-- `OPENCODE_FAILOVER_PROVIDERS`: comma-separated provider alias list; used with `config.model` model ID.
-- `OPENCODE_FAILOVER_MAX_ATTEMPTS`: max retries per session (default `2`).
-- `OPENCODE_FAILOVER_COOLDOWN_MS`: minimum time between retries for the same session (default `90000`).
-- `OPENCODE_FAILOVER_ENABLED`: `true|false` (default `true`).
-- `OPENCODE_FAILOVER_NOTIFY_COMMAND`: optional custom shell command with placeholders `{title}`, `{message}`, `{json}`.
+The plugin uses existing sipmon/OpenCode paths:
 
-Example:
+- sipmon snapshots: `$SIPMON_OPENAI_PROFILES_DIR` or `~/.local/share/sipmon/profiles/openai`
+- OpenCode auth: `$OPENCODE_AUTH_FILE` or `~/.local/share/opencode/auth.json`
 
-```bash
-export OPENCODE_FAILOVER_MODELS="openai-backup/gpt-5.3-codex,openai-third/gpt-5.3-codex"
-export OPENCODE_FAILOVER_MAX_ATTEMPTS="2"
-export OPENCODE_FAILOVER_COOLDOWN_MS="90000"
-```
+As long as sipmon snapshots exist, switching works automatically.
 
 ## Notifications
 
@@ -85,12 +61,37 @@ Default local notification behavior:
 - Linux: `notify-send`
 - Windows: PowerShell message box
 
-You can override with `OPENCODE_FAILOVER_NOTIFY_COMMAND`.
+Optional override: `OPENCODE_FAILOVER_NOTIFY_COMMAND`
+
+Optional log path override: `OPENCODE_FAILOVER_LOG_FILE`
 
 ## Safety guards
 
 - In-flight lock per session
-- Cooldown per session
-- Maximum attempts per session
+- Cooldown per session (45s)
+- Maximum attempts per session (3)
 
 These are required because OpenCode event hooks are dispatched without awaiting plugin completion.
+
+## Selection rules
+
+For each sipmon snapshot (except current and already-tried ones), plugin:
+
+- refreshes token if needed
+- fetches usage from OpenAI usage API
+- computes usable status with strict rule: both 5h and 7d must be > 0
+- prefers Codex windows when available
+- selects the highest-scoring usable snapshot
+
+If no usable snapshot exists, no switch is performed.
+
+## Verify it loaded
+
+Check the log file (default: `~/.local/state/sipmon/opencode-sipmon.log`) for lines like:
+
+- `plugin_initialized`
+- `session_retry_status_received`
+- `session_error_received`
+- `snapshot_candidates_evaluated`
+- `active_auth_switched`
+- `switch_applied`
