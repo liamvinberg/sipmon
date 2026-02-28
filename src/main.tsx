@@ -341,14 +341,26 @@ function App({ onQuit }: { onQuit: () => void }) {
     setStatusLine(`Switching to ${row.profile.name}...`)
     try {
       await provider.switchToProfile(row.profile)
-      await refreshAll()
+      const profiles = await provider.listProfiles()
+      setRows((prevRows) => {
+        const usageByPath = new Map<string, ProfileUsage | null>()
+        for (const prev of prevRows) {
+          usageByPath.set(prev.profile.path, prev.usage)
+        }
+        return profiles.map((profile) => ({
+          profile,
+          usage: usageByPath.get(profile.path) ?? null,
+          loading: false,
+        }))
+      })
+      setSelectedIndex((index) => Math.max(0, Math.min(index, profiles.length - 1)))
       setStatusLine(`Switched to ${row.profile.name}`)
     } catch (error) {
       setStatusLine(`Switch failed: ${normalizeError(error)}`)
     } finally {
       setSwitching(false)
     }
-  }, [deleting, loggingIn, refreshAll, refreshing, renaming, selectedRow, switching])
+  }, [deleting, loggingIn, refreshing, renaming, selectedRow, switching])
 
   const loginWithOAuth = useCallback(async () => {
     if (refreshing || switching || loggingIn || renaming || deleting) return
