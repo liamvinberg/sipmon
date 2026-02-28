@@ -101,7 +101,7 @@ gh release create "v<version>" "dist/sipmon-<version>-darwin-arm64.tar.gz" --tit
 ./scripts/update-homebrew-formula.sh <version> ~/personal/projects/homebrew-tap
 ```
 
-6. Commit and push tap changes:
+5. Commit and push tap changes:
 
 ```bash
 cd ~/personal/projects/homebrew-tap
