@@ -18,6 +18,9 @@ const OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const OPENAI_SUBSCRIPTIONS_ENDPOINT = "https://chatgpt.com/backend-api/subscriptions";
+const SUBSCRIPTION_CACHE_TTL_MIN_MS = 6 * 60 * 60 * 1000;
+const SUBSCRIPTION_CACHE_TTL_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+const SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_CALLBACK_PORT = 1455;
 const OAUTH_CALLBACK_PATH = "/auth/callback";
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -50,6 +53,30 @@ type TokenResponse = {
   refresh_token?: string;
   expires_in?: number;
 };
+
+type SubscriptionCacheEntry = {
+  activeUntil: string | null;
+  expiresAt: number;
+};
+
+const subscriptionActiveUntilCache = new Map<string, SubscriptionCacheEntry>();
+
+function subscriptionCacheTtlMs(activeUntil: string | null, now: number): number {
+  if (!activeUntil) return SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS;
+
+  const endMs = new Date(activeUntil).getTime();
+  if (!Number.isFinite(endMs)) return SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS;
+
+  const remainingMs = endMs - now;
+  if (remainingMs <= 0) {
+    return SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS;
+  }
+
+  return Math.max(
+    SUBSCRIPTION_CACHE_TTL_MIN_MS,
+    Math.min(SUBSCRIPTION_CACHE_TTL_MAX_MS, remainingMs),
+  );
+}
 
 const HTML_SUCCESS = `<!doctype html>
 <html>
@@ -479,6 +506,12 @@ async function fetchSubscriptionActiveUntil(
 ): Promise<string | null> {
   if (!accountId) return null;
 
+  const now = Date.now();
+  const cached = subscriptionActiveUntilCache.get(accountId);
+  if (cached && cached.expiresAt > now) {
+    return cached.activeUntil;
+  }
+
   const params = new URLSearchParams({ account_id: accountId });
   const response = await fetch(
     `${OPENAI_SUBSCRIPTIONS_ENDPOINT}?${params.toString()}`,
@@ -492,11 +525,30 @@ async function fetchSubscriptionActiveUntil(
     },
   );
 
-  if (!response.ok) return null;
+  if (!response.ok) {
+    subscriptionActiveUntilCache.set(accountId, {
+      activeUntil: null,
+      expiresAt: now + SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS,
+    });
+    return null;
+  }
 
   const payload = asObject(await response.json());
-  if (!payload) return null;
-  return asString(payload.active_until);
+  if (!payload) {
+    subscriptionActiveUntilCache.set(accountId, {
+      activeUntil: null,
+      expiresAt: now + SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS,
+    });
+    return null;
+  }
+
+  const activeUntil = asString(payload.active_until);
+  subscriptionActiveUntilCache.set(accountId, {
+    activeUntil,
+    expiresAt: now + subscriptionCacheTtlMs(activeUntil, now),
+  });
+
+  return activeUntil;
 }
 
 function shouldRefresh(auth: OpenAIAuth): boolean {

@@ -133,11 +133,25 @@ function formatDuration(seconds: number | null): string {
   return `${minutes}m`
 }
 
-function formatDate(dateString: string | null): string {
+function formatEndsRelative(dateString: string | null): string {
   if (!dateString) return "--"
-  const date = new Date(dateString)
-  if (!Number.isFinite(date.getTime())) return "--"
-  return date.toISOString().slice(0, 10)
+  const endMs = new Date(dateString).getTime()
+  if (!Number.isFinite(endMs)) return "--"
+
+  const nowMs = Date.now()
+  const diffMs = endMs - nowMs
+  const dayMs = 86_400_000
+
+  if (diffMs >= 0) {
+    const days = Math.floor(diffMs / dayMs)
+    if (days >= 1) return `${days}d`
+    return "<1d"
+  }
+
+  const elapsedMs = Math.abs(diffMs)
+  const daysAgo = Math.floor(elapsedMs / dayMs)
+  if (daysAgo >= 1) return `-${daysAgo}d`
+  return "<0d"
 }
 
 function remainingText(window: UsageWindow | null): string {
@@ -583,7 +597,7 @@ function App({ onQuit }: { onQuit: () => void }) {
               : formatDuration(row.usage?.secondary?.resetAfterSeconds ?? null)
             const ends = isLoading
               ? waveCell(tick, 8, index + 20)
-              : formatDate(row.usage?.subscriptionActiveUntil ?? null)
+              : formatEndsRelative(row.usage?.subscriptionActiveUntil ?? null)
             const codex = isLoading ? waveCell(tick, 4, index + 24) : remainingText(row.usage?.codexPrimary || null)
             const status = isLoading ? spinnerFrame(tick + index * 2) : summaryStatus(row)
             const displayName = profileDisplayName(row)
