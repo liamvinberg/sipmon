@@ -42,11 +42,6 @@ type ProfileRow = {
   loading: boolean
 }
 
-type RenameMode = {
-  profile: ProviderProfile
-  value: string
-}
-
 type DeleteMode = {
   profile: ProviderProfile
 }
@@ -138,6 +133,13 @@ function formatDuration(seconds: number | null): string {
   return `${minutes}m`
 }
 
+function formatDate(dateString: string | null): string {
+  if (!dateString) return "--"
+  const date = new Date(dateString)
+  if (!Number.isFinite(date.getTime())) return "--"
+  return date.toISOString().slice(0, 10)
+}
+
 function remainingText(window: UsageWindow | null): string {
   const remaining = remainingPercent(window)
   if (remaining === null) return "--"
@@ -147,19 +149,6 @@ function remainingText(window: UsageWindow | null): string {
 function normalizeError(error: unknown): string {
   if (error instanceof Error) return error.message
   return "Unknown error"
-}
-
-function extractInputCharacter(key: KeyboardEventLike): string | null {
-  if (key.ctrl || key.meta) return null
-  const sequence = typeof key.sequence === "string" ? key.sequence : ""
-  if (sequence.length === 1 && /^[A-Za-z0-9._-]$/.test(sequence)) {
-    return sequence
-  }
-  const name = typeof key.name === "string" ? key.name : ""
-  if (name.length === 1 && /^[A-Za-z0-9._-]$/.test(name)) {
-    return name
-  }
-  return null
 }
 
 const SPINNER_FRAMES = ["\u28fe", "\u28fd", "\u28fb", "\u28bf", "\u287f", "\u28df", "\u28ef", "\u28f7"]
@@ -266,9 +255,7 @@ function App({ onQuit }: { onQuit: () => void }) {
   const [refreshing, setRefreshing] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [loggingIn, setLoggingIn] = useState(false)
-  const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [renameMode, setRenameMode] = useState<RenameMode | null>(null)
   const [deleteMode, setDeleteMode] = useState<DeleteMode | null>(null)
   const busyRef = useRef(false)
   const anyLoading = refreshing || rows.some((row) => row.loading)
@@ -329,7 +316,7 @@ function App({ onQuit }: { onQuit: () => void }) {
   }, [])
 
   const switchSelected = useCallback(async () => {
-    if (refreshing || switching || loggingIn || renaming || deleting) return
+    if (refreshing || switching || loggingIn || deleting) return
     const row = selectedRow
     if (!row) return
     if (row.profile.isActive) {
@@ -360,10 +347,10 @@ function App({ onQuit }: { onQuit: () => void }) {
     } finally {
       setSwitching(false)
     }
-  }, [deleting, loggingIn, refreshing, renaming, selectedRow, switching])
+  }, [deleting, loggingIn, refreshing, selectedRow, switching])
 
   const loginWithOAuth = useCallback(async () => {
-    if (refreshing || switching || loggingIn || renaming || deleting) return
+    if (refreshing || switching || loggingIn || deleting) return
     setLoggingIn(true)
     setStatusLine("Starting OAuth login in browser...")
     try {
@@ -379,41 +366,7 @@ function App({ onQuit }: { onQuit: () => void }) {
     } finally {
       setLoggingIn(false)
     }
-  }, [deleting, loggingIn, refreshAll, refreshing, renaming, switching])
-
-  const beginRename = useCallback(() => {
-    if (!selectedRow) return
-    if (selectedRow.profile.source !== "snapshot") {
-      setStatusLine("Select a saved profile to rename")
-      return
-    }
-    setDeleteMode(null)
-    setRenameMode({
-      profile: selectedRow.profile,
-      value: selectedRow.profile.name,
-    })
-    setStatusLine("Rename mode: edit name and press Enter")
-  }, [selectedRow])
-
-  const submitRename = useCallback(async () => {
-    if (!renameMode) return
-    const targetName = renameMode.value.trim()
-    if (!targetName) {
-      setStatusLine("Rename requires a name")
-      return
-    }
-    setRenaming(true)
-    try {
-      await provider.renameProfile(renameMode.profile, targetName)
-      setRenameMode(null)
-      await refreshAll()
-      setStatusLine(`Renamed to ${targetName}`)
-    } catch (error) {
-      setStatusLine(`Rename failed: ${normalizeError(error)}`)
-    } finally {
-      setRenaming(false)
-    }
-  }, [refreshAll, renameMode])
+  }, [deleting, loggingIn, refreshAll, refreshing, switching])
 
   const beginDelete = useCallback(() => {
     if (!selectedRow) return
@@ -421,7 +374,6 @@ function App({ onQuit }: { onQuit: () => void }) {
       setStatusLine("Select a saved profile to delete")
       return
     }
-    setRenameMode(null)
     setDeleteMode({ profile: selectedRow.profile })
     setStatusLine(`Delete ${selectedRow.profile.name}? y to confirm, n to cancel`)
   }, [selectedRow])
@@ -444,27 +396,6 @@ function App({ onQuit }: { onQuit: () => void }) {
 
   useKeyboard((rawKey) => {
     const key = rawKey as KeyboardEventLike
-
-    if (renameMode) {
-      if (key.name === "escape") {
-        setRenameMode(null)
-        setStatusLine("Rename cancelled")
-        return
-      }
-      if (key.name === "return") {
-        void submitRename()
-        return
-      }
-      if (key.name === "backspace" || key.name === "delete") {
-        setRenameMode((mode) => (mode ? { ...mode, value: mode.value.slice(0, -1) } : mode))
-        return
-      }
-      const char = extractInputCharacter(key)
-      if (char) {
-        setRenameMode((mode) => (mode ? { ...mode, value: mode.value + char } : mode))
-      }
-      return
-    }
 
     if (deleteMode) {
       if (key.name === "y") {
@@ -496,10 +427,6 @@ function App({ onQuit }: { onQuit: () => void }) {
     }
     if (key.name === "a" && !key.repeated) {
       void loginWithOAuth()
-      return
-    }
-    if (key.name === "r" && !key.repeated) {
-      beginRename()
       return
     }
     if (key.name === "d" && !key.repeated) {
@@ -537,13 +464,11 @@ function App({ onQuit }: { onQuit: () => void }) {
   )
   const selectedCodeReviewWindow = selectedUsage?.codeReviewPrimary || selectedUsage?.codeReviewSecondary || null
 
-  const isBusy = refreshing || switching || loggingIn || renaming || deleting
+  const isBusy = refreshing || switching || loggingIn || deleting
 
-  const contextLine = renameMode
-    ? `Rename: ${renameMode.value || "<name>"} (Enter confirm, Esc cancel)`
-    : deleteMode
-      ? `Delete ${deleteMode.profile.name}? (y confirm, n cancel)`
-      : "j/k move  a login(oauth)  s switch  r rename  d delete  u refresh  q quit"
+  const contextLine = deleteMode
+    ? `Delete ${deleteMode.profile.name}? (y confirm, n cancel)`
+    : "j/k move  a login(oauth)  s switch  d delete  u refresh  q quit"
 
   return (
     <box style={{ backgroundColor: theme.bgBase, alignItems: "center", justifyContent: "center", height: "100%" }}>
@@ -594,34 +519,49 @@ function App({ onQuit }: { onQuit: () => void }) {
           <box style={{ width: 4 }}>
             <text>{" "}</text>
           </box>
-          <box style={{ width: 34 }}>
+          <box style={{ width: 28 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               Profile
             </text>
           </box>
-          <box style={{ width: 7 }}>
+          <box style={{ width: 6 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               Plan
             </text>
           </box>
-          <box style={{ width: 7 }}>
+          <box style={{ width: 5 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               5h
             </text>
           </box>
-          <box style={{ width: 7 }}>
+          <box style={{ width: 5 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               7d
             </text>
           </box>
-          <box style={{ width: 7 }}>
+          <box style={{ width: 8 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              rst 5h
+            </text>
+          </box>
+          <box style={{ width: 8 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              rst 7d
+            </text>
+          </box>
+          <box style={{ width: 11 }}>
+            <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+              Ends
+            </text>
+          </box>
+          <box style={{ width: 6 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
               Codex
             </text>
           </box>
-          <box style={{ width: 7 }}>
+          <box style={{ width: 4 }}>
             <text attributes={TextAttributes.DIM} fg={theme.textDim}>
-              Status
+              St
             </text>
           </box>
         </box>
@@ -635,7 +575,16 @@ function App({ onQuit }: { onQuit: () => void }) {
             const plan = isLoading ? waveCell(tick, 4, index) : (row.usage?.planType || "--")
             const p5 = isLoading ? waveCell(tick, 4, index + 4) : remainingText(row.usage?.primary || null)
             const p7 = isLoading ? waveCell(tick, 4, index + 8) : remainingText(row.usage?.secondary || null)
-            const codex = isLoading ? waveCell(tick, 4, index + 12) : remainingText(row.usage?.codexPrimary || null)
+            const rst5 = isLoading
+              ? waveCell(tick, 6, index + 12)
+              : formatDuration(row.usage?.primary?.resetAfterSeconds ?? null)
+            const rst7 = isLoading
+              ? waveCell(tick, 6, index + 16)
+              : formatDuration(row.usage?.secondary?.resetAfterSeconds ?? null)
+            const ends = isLoading
+              ? waveCell(tick, 8, index + 20)
+              : formatDate(row.usage?.subscriptionActiveUntil ?? null)
+            const codex = isLoading ? waveCell(tick, 4, index + 24) : remainingText(row.usage?.codexPrimary || null)
             const status = isLoading ? spinnerFrame(tick + index * 2) : summaryStatus(row)
             const displayName = profileDisplayName(row)
             const nameColor = row.usage?.error
@@ -657,22 +606,31 @@ function App({ onQuit }: { onQuit: () => void }) {
                 <box style={{ width: 4 }}>
                   <text fg={selected ? theme.accent : theme.textDim}>{indicator}</text>
                 </box>
-                <box style={{ width: 34 }}>
-                  <text fg={nameColor}>{truncate(displayName, 33)}</text>
+                <box style={{ width: 28 }}>
+                  <text fg={nameColor}>{truncate(displayName, 27)}</text>
                 </box>
-                <box style={{ width: 7 }}>
+                <box style={{ width: 6 }}>
                   <text fg={isLoading ? theme.accent : theme.textMuted}>{plan}</text>
                 </box>
-                <box style={{ width: 7 }}>
+                <box style={{ width: 5 }}>
                   <text fg={isLoading ? theme.accent : metricColor(row.usage?.primary || null)}>{p5}</text>
                 </box>
-                <box style={{ width: 7 }}>
+                <box style={{ width: 5 }}>
                   <text fg={isLoading ? theme.accent : metricColor(row.usage?.secondary || null)}>{p7}</text>
                 </box>
-                <box style={{ width: 7 }}>
+                <box style={{ width: 8 }}>
+                  <text fg={isLoading ? theme.accent : theme.textDim}>{truncate(rst5, 7)}</text>
+                </box>
+                <box style={{ width: 8 }}>
+                  <text fg={isLoading ? theme.accent : theme.textDim}>{truncate(rst7, 7)}</text>
+                </box>
+                <box style={{ width: 11 }}>
+                  <text fg={isLoading ? theme.accent : theme.textMuted}>{truncate(ends, 10)}</text>
+                </box>
+                <box style={{ width: 6 }}>
                   <text fg={isLoading ? theme.accent : metricColor(row.usage?.codexPrimary || null)}>{codex}</text>
                 </box>
-                <box style={{ width: 7 }}>
+                <box style={{ width: 4 }}>
                 <text
                   fg={
                     isLoading

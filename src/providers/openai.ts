@@ -17,6 +17,7 @@ import type {
 const OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
+const OPENAI_SUBSCRIPTIONS_ENDPOINT = "https://chatgpt.com/backend-api/subscriptions";
 const OAUTH_CALLBACK_PORT = 1455;
 const OAUTH_CALLBACK_PATH = "/auth/callback";
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -396,6 +397,7 @@ function emptyUsage(error: string | null): ProfileUsage {
   return {
     email: null,
     planType: null,
+    subscriptionActiveUntil: null,
     primary: null,
     secondary: null,
     codeReviewAllowed: null,
@@ -455,6 +457,7 @@ function parseUsagePayload(payload: JsonObject): ProfileUsage {
   return {
     email: asString(payload.email),
     planType: asString(payload.plan_type),
+    subscriptionActiveUntil: null,
     primary,
     secondary,
     codeReviewAllowed,
@@ -468,6 +471,32 @@ function parseUsagePayload(payload: JsonObject): ProfileUsage {
     creditsUnlimited,
     error: null,
   };
+}
+
+async function fetchSubscriptionActiveUntil(
+  accessToken: string,
+  accountId: string | null,
+): Promise<string | null> {
+  if (!accountId) return null;
+
+  const params = new URLSearchParams({ account_id: accountId });
+  const response = await fetch(
+    `${OPENAI_SUBSCRIPTIONS_ENDPOINT}?${params.toString()}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "User-Agent": "sipmon/0.1",
+      },
+    },
+  );
+
+  if (!response.ok) return null;
+
+  const payload = asObject(await response.json());
+  if (!payload) return null;
+  return asString(payload.active_until);
 }
 
 function shouldRefresh(auth: OpenAIAuth): boolean {
@@ -781,28 +810,6 @@ async function saveCurrentProfile(
   return { path: filePath, overwritten };
 }
 
-async function renameProfile(
-  profile: ProviderProfile,
-  name: string,
-): Promise<{ path: string }> {
-  if (profile.source !== "snapshot") {
-    throw new Error("Only saved snapshots can be renamed");
-  }
-
-  const profileName = validateProfileName(name);
-  const nextPath = path.join(path.dirname(profile.path), `${profileName}.json`);
-  if (nextPath === profile.path) {
-    return { path: nextPath };
-  }
-
-  if (await pathExists(nextPath)) {
-    throw new Error(`Snapshot already exists: ${profileName}`);
-  }
-
-  await fs.rename(profile.path, nextPath);
-  return { path: nextPath };
-}
-
 async function deleteProfile(profile: ProviderProfile): Promise<void> {
   if (profile.source !== "snapshot") {
     throw new Error("Only saved snapshots can be deleted");
@@ -854,7 +861,16 @@ async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
     return emptyUsage("Usage payload is not JSON object");
   }
 
-  return parseUsagePayload(payload);
+  const parsed = parseUsagePayload(payload);
+  try {
+    parsed.subscriptionActiveUntil = await fetchSubscriptionActiveUntil(
+      access,
+      accountId,
+    );
+  } catch {
+    parsed.subscriptionActiveUntil = null;
+  }
+  return parsed;
 }
 
 export const openAIProvider: ProviderAdapter = {
@@ -864,7 +880,6 @@ export const openAIProvider: ProviderAdapter = {
   listProfiles,
   switchToProfile,
   saveCurrentProfile,
-  renameProfile,
   deleteProfile,
   fetchUsage,
 };
