@@ -2,7 +2,13 @@ import { createCliRenderer, TextAttributes } from "@opentui/core"
 import { createRoot, useKeyboard } from "@opentui/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { providers } from "./providers"
-import type { ProfileUsage, ProviderProfile, UsageWindow } from "./providers/types"
+import type {
+  ProfileUsage,
+  ProviderLoginMethod,
+  ProviderLoginSession,
+  ProviderProfile,
+  UsageWindow,
+} from "./providers/types"
 
 const provider = providers[0]
 
@@ -45,6 +51,18 @@ type ProfileRow = {
 type DeleteMode = {
   profile: ProviderProfile
 }
+
+type LoginDialog =
+  | {
+      type: "picker"
+      selectedIndex: number
+    }
+  | {
+      type: "session"
+      method: ProviderLoginMethod
+      url: string
+      code: string | null
+    }
 
 function restoreTerminalState() {
   if (!process.stdout.isTTY) return
@@ -271,8 +289,10 @@ function App({ onQuit }: { onQuit: () => void }) {
   const [loggingIn, setLoggingIn] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteMode, setDeleteMode] = useState<DeleteMode | null>(null)
+  const [loginDialog, setLoginDialog] = useState<LoginDialog | null>(null)
   const busyRef = useRef(false)
-  const anyLoading = refreshing || rows.some((row) => row.loading)
+  const loginSessionRef = useRef<ProviderLoginSession | null>(null)
+  const anyLoading = refreshing || loggingIn || rows.some((row) => row.loading)
   const tick = useAnimationTick(anyLoading)
 
   const selectedRow = rows[selectedIndex] || null
@@ -363,24 +383,77 @@ function App({ onQuit }: { onQuit: () => void }) {
     }
   }, [deleting, loggingIn, refreshing, selectedRow, switching])
 
-  const loginWithOAuth = useCallback(async () => {
-    if (refreshing || switching || loggingIn || deleting) return
-    setLoggingIn(true)
-    setStatusLine("Starting OAuth login in browser...")
-    try {
-      const result = await provider.loginWithOAuth()
-      await refreshAll()
-      if (result.accountId) {
-        setStatusLine(`OAuth login successful (${result.accountId})`)
-      } else {
-        setStatusLine("OAuth login successful")
+  const finishLogin = useCallback(
+    async (method: ProviderLoginMethod, session: ProviderLoginSession) => {
+      try {
+        const result = await session.complete()
+        await refreshAll()
+        if (result.accountId) {
+          setStatusLine(`${method.label} successful (${result.accountId})`)
+        } else {
+          setStatusLine(`${method.label} successful`)
+        }
+      } catch (error) {
+        setStatusLine(`${method.label} failed: ${normalizeError(error)}`)
+      } finally {
+        loginSessionRef.current = null
+        setLoginDialog(null)
+        setLoggingIn(false)
       }
-    } catch (error) {
-      setStatusLine(`OAuth login failed: ${normalizeError(error)}`)
-    } finally {
-      setLoggingIn(false)
+    },
+    [refreshAll],
+  )
+
+  const startLoginFlow = useCallback(
+    async (method: ProviderLoginMethod) => {
+      if (refreshing || switching || loggingIn || deleting) return
+      setLoggingIn(true)
+      setStatusLine(
+        method.id === "browser"
+          ? "Opening browser login..."
+          : "Requesting verification code...",
+      )
+      try {
+        const session = await provider.startLogin(method.id)
+        loginSessionRef.current = session
+        setLoginDialog({
+          type: "session",
+          method,
+          url: session.url,
+          code: session.code,
+        })
+        setStatusLine(
+          session.code
+            ? "Open the device page, enter the code, and wait here"
+            : "Browser opened. If it did not open, use the URL shown in the modal.",
+        )
+        void finishLogin(method, session)
+      } catch (error) {
+        loginSessionRef.current = null
+        setLoginDialog(null)
+        setLoggingIn(false)
+        setStatusLine(`${method.label} failed: ${normalizeError(error)}`)
+      }
+    },
+    [deleting, finishLogin, loggingIn, refreshing, switching],
+  )
+
+  const openLoginDialog = useCallback(() => {
+    if (refreshing || switching || loggingIn || deleting) return
+    if (provider.loginMethods.length === 1) {
+      void startLoginFlow(provider.loginMethods[0])
+      return
     }
-  }, [deleting, loggingIn, refreshAll, refreshing, switching])
+    setLoginDialog({ type: "picker", selectedIndex: 0 })
+    setStatusLine("Select a login method")
+  }, [deleting, loggingIn, refreshing, startLoginFlow, switching])
+
+  const submitSelectedLoginMethod = useCallback(() => {
+    if (!loginDialog || loginDialog.type !== "picker") return
+    const method = provider.loginMethods[loginDialog.selectedIndex]
+    if (!method) return
+    void startLoginFlow(method)
+  }, [loginDialog, startLoginFlow])
 
   const beginDelete = useCallback(() => {
     if (!selectedRow) return
@@ -423,6 +496,46 @@ function App({ onQuit }: { onQuit: () => void }) {
       return
     }
 
+    if (loginDialog?.type === "picker") {
+      if (key.name === "up" || key.name === "k") {
+        setLoginDialog((current) => {
+          if (!current || current.type !== "picker") return current
+          return {
+            ...current,
+            selectedIndex: Math.max(0, current.selectedIndex - 1),
+          }
+        })
+        return
+      }
+      if (key.name === "down" || key.name === "j") {
+        setLoginDialog((current) => {
+          if (!current || current.type !== "picker") return current
+          return {
+            ...current,
+            selectedIndex: Math.min(provider.loginMethods.length - 1, current.selectedIndex + 1),
+          }
+        })
+        return
+      }
+      if (key.name === "return" && !key.repeated) {
+        submitSelectedLoginMethod()
+        return
+      }
+      if (key.name === "escape") {
+        setLoginDialog(null)
+        setStatusLine("Login cancelled")
+        return
+      }
+      return
+    }
+
+    if (loginDialog?.type === "session") {
+      if (key.name === "escape") {
+        setStatusLine("Authorization is still in progress. Complete it in the browser to continue.")
+        return
+      }
+    }
+
     if (key.name === "q" || key.name === "escape") {
       onQuit()
       return
@@ -440,7 +553,7 @@ function App({ onQuit }: { onQuit: () => void }) {
       return
     }
     if (key.name === "a" && !key.repeated) {
-      void loginWithOAuth()
+      openLoginDialog()
       return
     }
     if (key.name === "d" && !key.repeated) {
@@ -482,7 +595,80 @@ function App({ onQuit }: { onQuit: () => void }) {
 
   const contextLine = deleteMode
     ? `Delete ${deleteMode.profile.name}? (y confirm, n cancel)`
-    : "j/k move  a login(oauth)  s switch  d delete  u refresh  q quit"
+    : loginDialog?.type === "picker"
+      ? "j/k move  Enter select  esc cancel"
+      : loginDialog?.type === "session"
+        ? "Complete authentication in the modal and browser"
+        : "j/k move  a login  s switch  d delete  u refresh  q quit"
+
+  if (loginDialog) {
+    return (
+      <box style={{ backgroundColor: theme.bgBase, alignItems: "center", justifyContent: "center", height: "100%" }}>
+        <box
+          title={loginDialog.type === "picker" ? " Login Method " : " Connect OpenAI / Codex "}
+          style={{
+            border: true,
+            borderColor: theme.borderFocus,
+            backgroundColor: theme.bgPanel,
+            padding: 1,
+            width: 76,
+            flexDirection: "column",
+          }}
+        >
+          {loginDialog.type === "picker" ? (
+            <>
+              <text fg={theme.textMuted}>Choose how to connect your ChatGPT account.</text>
+              <box style={{ marginTop: 1, flexDirection: "column", gap: 1 }}>
+                {provider.loginMethods.map((method, index) => {
+                  const selected = index === loginDialog.selectedIndex
+                  return (
+                    <box
+                      key={method.id}
+                      style={{
+                        flexDirection: "column",
+                        backgroundColor: selected ? theme.bgSelected : undefined,
+                        padding: 1,
+                      }}
+                    >
+                      <text fg={selected ? theme.accent : theme.text}>
+                        {(selected ? "> " : "  ") + method.label}
+                      </text>
+                      <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+                        {method.description}
+                      </text>
+                    </box>
+                  )
+                })}
+              </box>
+            </>
+          ) : (
+            <>
+              <text fg={theme.textMuted}>{loginDialog.method.label}</text>
+              <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+                {loginDialog.code
+                  ? "Open the device page below, enter this code, and keep sipmon open while we wait for approval."
+                  : "Finish the browser login. If the browser did not open automatically, use the URL below."}
+              </text>
+              <text>
+                <span fg={theme.textDim}>{"URL  "}</span>
+                <span fg={theme.accent}>{truncate(loginDialog.url, 60)}</span>
+              </text>
+              {loginDialog.code ? (
+                <text>
+                  <span fg={theme.textDim}>{"Code "}</span>
+                  <span fg={theme.success}>{loginDialog.code}</span>
+                </text>
+              ) : null}
+              <text fg={theme.warning}>{spinnerFrame(tick) + " " + statusLine}</text>
+              <text attributes={TextAttributes.DIM} fg={theme.textDim}>
+                {loginDialog.code ? "Press q only after the login finishes or fails." : "Return here after approving the login in your browser."}
+              </text>
+            </>
+          )}
+        </box>
+      </box>
+    )
+  }
 
   return (
     <box style={{ backgroundColor: theme.bgBase, alignItems: "center", justifyContent: "center", height: "100%" }}>
@@ -515,7 +701,7 @@ function App({ onQuit }: { onQuit: () => void }) {
           {contextLine}
         </text>
         <text fg={isBusy ? theme.warning : theme.textMuted}>
-          {refreshing ? spinnerFrame(tick) + " " + statusLine : statusLine}
+          {refreshing || loggingIn ? spinnerFrame(tick) + " " + statusLine : statusLine}
         </text>
       </box>
 

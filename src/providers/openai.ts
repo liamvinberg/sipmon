@@ -8,6 +8,10 @@ import {
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type {
+  ProviderLoginMethod,
+  ProviderLoginMethodId,
+  ProviderLoginResult,
+  ProviderLoginSession,
   ProfileUsage,
   ProviderAdapter,
   ProviderProfile,
@@ -18,12 +22,18 @@ const OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 const OPENAI_SUBSCRIPTIONS_ENDPOINT = "https://chatgpt.com/backend-api/subscriptions";
+const OPENAI_DEVICE_AUTHORIZE_ENDPOINT =
+  "https://auth.openai.com/api/accounts/deviceauth/usercode";
+const OPENAI_DEVICE_TOKEN_ENDPOINT =
+  "https://auth.openai.com/api/accounts/deviceauth/token";
+const OPENAI_DEVICE_LOGIN_URL = "https://auth.openai.com/codex/device";
 const SUBSCRIPTION_CACHE_TTL_MIN_MS = 6 * 60 * 60 * 1000;
 const SUBSCRIPTION_CACHE_TTL_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 const SUBSCRIPTION_NEGATIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_CALLBACK_PORT = 1455;
 const OAUTH_CALLBACK_PATH = "/auth/callback";
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000;
 
 type JsonObject = Record<string, unknown>;
 
@@ -54,10 +64,40 @@ type TokenResponse = {
   expires_in?: number;
 };
 
+type DeviceAuthResponse = {
+  device_auth_id?: string;
+  user_code?: string;
+  interval?: string | number;
+};
+
+type DeviceTokenResponse = {
+  authorization_code?: string;
+  code_verifier?: string;
+};
+
+type DeviceAuthSession = {
+  deviceAuthId: string;
+  userCode: string;
+  intervalMs: number;
+};
+
 type SubscriptionCacheEntry = {
   activeUntil: string | null;
   expiresAt: number;
 };
+
+const loginMethods: ProviderLoginMethod[] = [
+  {
+    id: "browser",
+    label: "Login in browser",
+    description: "Open ChatGPT in your browser and complete OAuth there.",
+  },
+  {
+    id: "code",
+    label: "Use verification code",
+    description: "Get a short code, enter it on OpenAI's device page, and wait here.",
+  },
+];
 
 const subscriptionActiveUntilCache = new Map<string, SubscriptionCacheEntry>();
 
@@ -234,7 +274,7 @@ function buildAuthorizeUrl(
 async function exchangeCodeForTokens(
   code: string,
   redirectUri: string,
-  pkce: PkceCodes,
+  codeVerifier: string,
 ): Promise<TokenResponse> {
   const response = await fetch(`${OPENAI_ISSUER}/oauth/token`, {
     method: "POST",
@@ -244,13 +284,111 @@ async function exchangeCodeForTokens(
       code,
       redirect_uri: redirectUri,
       client_id: OPENAI_OAUTH_CLIENT_ID,
-      code_verifier: pkce.verifier,
+      code_verifier: codeVerifier,
     }).toString(),
   });
   if (!response.ok) {
     throw new Error(`Token exchange failed: ${response.status}`);
   }
   return (await response.json()) as TokenResponse;
+}
+
+function parseDevicePollInterval(interval: string | number | undefined): number {
+  const numericInterval =
+    typeof interval === "number" ? interval : Number.parseFloat(interval || "");
+  if (!Number.isFinite(numericInterval) || numericInterval <= 0) {
+    return 5000;
+  }
+  return Math.round(numericInterval * 1000);
+}
+
+async function requestDeviceAuthSession(): Promise<DeviceAuthSession> {
+  const response = await fetch(OPENAI_DEVICE_AUTHORIZE_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "sipmon/0.1",
+    },
+    body: JSON.stringify({ client_id: OPENAI_OAUTH_CLIENT_ID }),
+  });
+  if (!response.ok) {
+    throw new Error(`Device authorization failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as DeviceAuthResponse;
+  const deviceAuthId = asString(payload.device_auth_id);
+  const userCode = asString(payload.user_code);
+  if (!deviceAuthId || !userCode) {
+    throw new Error("Device authorization returned invalid payload");
+  }
+
+  return {
+    deviceAuthId,
+    userCode,
+    intervalMs: parseDevicePollInterval(payload.interval),
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function authFromTokens(tokens: TokenResponse): OpenAIAuth {
+  const access = asString(tokens.access_token);
+  const refresh = asString(tokens.refresh_token);
+  if (!access || !refresh) {
+    throw new Error("OAuth response missing access or refresh token");
+  }
+
+  const expiresIn = asNumber(tokens.expires_in) || 3600;
+  const accountId = extractAccountIdFromTokens(tokens);
+
+  return {
+    type: "oauth",
+    access,
+    refresh,
+    expires: Date.now() + expiresIn * 1000,
+    ...(accountId ? { accountId } : {}),
+  };
+}
+
+async function pollDeviceAuthTokens(
+  session: DeviceAuthSession,
+): Promise<TokenResponse> {
+  for (;;) {
+    const response = await fetch(OPENAI_DEVICE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "sipmon/0.1",
+      },
+      body: JSON.stringify({
+        device_auth_id: session.deviceAuthId,
+        user_code: session.userCode,
+      }),
+    });
+
+    if (response.status === 403 || response.status === 404) {
+      await sleep(session.intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS);
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`Device token polling failed: ${response.status}`);
+    }
+
+    const payload = (await response.json()) as DeviceTokenResponse;
+    const authorizationCode = asString(payload.authorization_code);
+    const codeVerifier = asString(payload.code_verifier);
+    if (!authorizationCode || !codeVerifier) {
+      throw new Error("Device token polling returned invalid payload");
+    }
+
+    return exchangeCodeForTokens(
+      authorizationCode,
+      `${OPENAI_ISSUER}/deviceauth/callback`,
+      codeVerifier,
+    );
+  }
 }
 
 function decodeJwtPayload(token: string): JsonObject | null {
@@ -333,6 +471,45 @@ async function readCurrentAuth(authFile: string): Promise<OpenAIAuth | null> {
   } catch {
     return null;
   }
+}
+
+function hasUsableAuth(auth: OpenAIAuth | null): auth is OpenAIAuth {
+  if (!auth) return false;
+  return Boolean(asString(auth.access) || asString(auth.refresh));
+}
+
+async function canImportMissingCurrentAuth(authFile: string): Promise<boolean> {
+  try {
+    const root = await readJsonObject(authFile);
+    return !hasUsableAuth(toOpenAIAuth(root.openai));
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return true;
+    }
+    return false;
+  }
+}
+
+async function importOpenCodeAuth(paths: OpenAIPaths): Promise<OpenAIAuth | null> {
+  const imported = await readCurrentAuth(paths.opencodeAuthFile);
+  if (!hasUsableAuth(imported)) return null;
+
+  await writeCurrentAuth(paths.authFile, imported);
+  return imported;
+}
+
+async function readCurrentAuthWithImport(paths: OpenAIPaths): Promise<OpenAIAuth | null> {
+  const current = await readCurrentAuth(paths.authFile);
+  if (hasUsableAuth(current)) return current;
+  if (!(await canImportMissingCurrentAuth(paths.authFile))) {
+    return current;
+  }
+  return importOpenCodeAuth(paths);
 }
 
 async function writeCurrentAuth(
@@ -661,18 +838,20 @@ function sendHtml(
   res.end(html);
 }
 
-async function runBrowserOAuthLogin(): Promise<OpenAIAuth> {
+function startBrowserLogin(): ProviderLoginSession {
   const redirectUri = `http://localhost:${OAUTH_CALLBACK_PORT}${OAUTH_CALLBACK_PATH}`;
   const pkce = generatePkce();
   const state = generateRandomState();
   const authUrl = buildAuthorizeUrl(redirectUri, pkce, state);
 
   const tokensPromise = new Promise<TokenResponse>((resolve, reject) => {
+    let server: ReturnType<typeof createServer> | null = null;
     const timeout = setTimeout(() => {
+      server?.close();
       reject(new Error("OAuth callback timeout"));
     }, OAUTH_TIMEOUT_MS);
 
-    const server = createServer(async (req, res) => {
+    server = createServer(async (req, res) => {
       const requestUrl = new URL(req.url || "/", redirectUri);
       if (requestUrl.pathname !== OAUTH_CALLBACK_PATH) {
         sendHtml(res, 404, htmlError("Not found"));
@@ -685,7 +864,7 @@ async function runBrowserOAuthLogin(): Promise<OpenAIAuth> {
         const message = errorDescription || error;
         sendHtml(res, 400, htmlError(message));
         clearTimeout(timeout);
-        server.close();
+        server?.close();
         reject(new Error(message));
         return;
       }
@@ -696,7 +875,7 @@ async function runBrowserOAuthLogin(): Promise<OpenAIAuth> {
       if (!code) {
         sendHtml(res, 400, htmlError("Missing authorization code"));
         clearTimeout(timeout);
-        server.close();
+        server?.close();
         reject(new Error("Missing authorization code"));
         return;
       }
@@ -704,23 +883,23 @@ async function runBrowserOAuthLogin(): Promise<OpenAIAuth> {
       if (!returnedState || returnedState !== state) {
         sendHtml(res, 400, htmlError("Invalid state parameter"));
         clearTimeout(timeout);
-        server.close();
+        server?.close();
         reject(new Error("Invalid state parameter"));
         return;
       }
 
       try {
-        const tokens = await exchangeCodeForTokens(code, redirectUri, pkce);
+        const tokens = await exchangeCodeForTokens(code, redirectUri, pkce.verifier);
         sendHtml(res, 200, HTML_SUCCESS);
         clearTimeout(timeout);
-        server.close();
+        server?.close();
         resolve(tokens);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Token exchange failed";
         sendHtml(res, 500, htmlError(message));
         clearTimeout(timeout);
-        server.close();
+        server?.close();
         reject(new Error(message));
       }
     });
@@ -735,28 +914,15 @@ async function runBrowserOAuthLogin(): Promise<OpenAIAuth> {
     });
   });
 
-  const tokens = await tokensPromise;
-  const access = asString(tokens.access_token);
-  const refresh = asString(tokens.refresh_token);
-  if (!access || !refresh) {
-    throw new Error("OAuth response missing access or refresh token");
-  }
-
-  const expiresIn = asNumber(tokens.expires_in) || 3600;
-  const accountId = extractAccountIdFromTokens(tokens);
-
   return {
-    type: "oauth",
-    access,
-    refresh,
-    expires: Date.now() + expiresIn * 1000,
-    ...(accountId ? { accountId } : {}),
+    url: authUrl,
+    code: null,
+    complete: async () => finalizeLogin(authFromTokens(await tokensPromise)),
   };
 }
 
-async function loginWithOAuth(): Promise<{ accountId: string | null }> {
+async function finalizeLogin(auth: OpenAIAuth): Promise<ProviderLoginResult> {
   const paths = resolvePaths();
-  const auth = await runBrowserOAuthLogin();
   await writeActiveAuth(auth, paths);
   const accountId = extractAccountId(auth);
   const snapshotName = accountId || "openai-profile";
@@ -764,9 +930,30 @@ async function loginWithOAuth(): Promise<{ accountId: string | null }> {
   return { accountId };
 }
 
+async function startDeviceCodeLogin(): Promise<ProviderLoginSession> {
+  const session = await requestDeviceAuthSession();
+  return {
+    url: OPENAI_DEVICE_LOGIN_URL,
+    code: session.userCode,
+    complete: async () => finalizeLogin(authFromTokens(await pollDeviceAuthTokens(session))),
+  };
+}
+
+async function startLogin(
+  methodId: ProviderLoginMethodId,
+): Promise<ProviderLoginSession> {
+  if (methodId === "browser") {
+    return startBrowserLogin();
+  }
+  if (methodId === "code") {
+    return startDeviceCodeLogin();
+  }
+  throw new Error(`Unsupported login method: ${methodId}`);
+}
+
 async function listProfiles(): Promise<ProviderProfile[]> {
   const paths = resolvePaths();
-  const currentAuth = await readCurrentAuth(paths.authFile);
+  const currentAuth = await readCurrentAuthWithImport(paths);
   const snapshots = await readSnapshots(paths.openaiProfilesDir);
 
   const rows: ProviderProfile[] = snapshots.map((snapshot) => ({
@@ -928,7 +1115,8 @@ async function fetchUsage(profile: ProviderProfile): Promise<ProfileUsage> {
 export const openAIProvider: ProviderAdapter = {
   id: "openai",
   label: "OpenAI / Codex",
-  loginWithOAuth,
+  loginMethods,
+  startLogin,
   listProfiles,
   switchToProfile,
   saveCurrentProfile,

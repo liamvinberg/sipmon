@@ -33,10 +33,29 @@ export type ProviderProfile = {
   isActive: boolean
 }
 
+export type ProviderLoginMethodId = "browser" | "code"
+
+export type ProviderLoginMethod = {
+  id: ProviderLoginMethodId
+  label: string
+  description: string
+}
+
+export type ProviderLoginResult = {
+  accountId: string | null
+}
+
+export type ProviderLoginSession = {
+  url: string
+  code: string | null
+  complete: () => Promise<ProviderLoginResult>
+}
+
 export type ProviderAdapter = {
   id: string
   label: string
-  loginWithOAuth: () => Promise<{ accountId: string | null }>
+  loginMethods: ProviderLoginMethod[]
+  startLogin: (methodId: ProviderLoginMethodId) => Promise<ProviderLoginSession>
   listProfiles: () => Promise<ProviderProfile[]>
   switchToProfile: (profile: ProviderProfile) => Promise<void>
   saveCurrentProfile: (name: string) => Promise<{ path: string; overwritten: boolean }>
